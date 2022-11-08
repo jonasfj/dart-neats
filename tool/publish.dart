@@ -80,8 +80,8 @@ Future<int> main(List<String> args) async {
   // Do a pub publish
   print('\$ pub publish');
   final pub = await Process.start(
-    'pub',
-    ['publish'],
+    'dart',
+    ['pub', 'publish'],
     includeParentEnvironment: true,
     workingDirectory: '$root/$package',
     mode: ProcessStartMode.inheritStdio,
