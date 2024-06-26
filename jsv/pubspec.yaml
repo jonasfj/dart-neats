@@ -1,0 +1,24 @@
+name: jsv
+description: 
+homepage: https://github.com/google/dart-neats/tree/master/jsv
+repository: https://github.com/google/dart-neats.git
+issue_tracker: https://github.com/google/dart-neats/labels/pkg:jsv
+topics:
+ - json
+ - json-schema
+ - validation
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  collection: ^1.17.2
+  convert: ^3.1.1
+  meta: ^1.3.0
+  source_span: ^1.10.0
+  yaml: ^3.1.2
+
+dev_dependencies:
+  test: ^1.16.0
+  lints: ^1.0.0
+

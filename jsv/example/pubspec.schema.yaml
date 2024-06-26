@@ -1,0 +1,85 @@
+type: object
+additionalProperties: true
+$defs:
+  dependencies:
+    additionalProperties:
+      anyOf:
+      - {type: string}
+      - additionalProperties: false
+        properties:
+          version:      {type: 'string'}
+          hosted:
+            anyOf:
+            - {format: uri}
+            - additionalProperties: false
+              properties:
+                url:    {format: uri}
+                name:   {format: string}
+        required: [hosted]
+      - additionalProperties: false
+        properties:
+          version:  {type: string}
+          path:     {type: string}
+        required: [path]
+      - additionalProperties: false
+        properties:
+          version:  {type: string}
+          sdk:      {enum: ['flutter']}
+        required: [sdk]
+      - additionalProperties: false
+        properties:
+          version:  {type: string}
+          git:
+            anyOf:
+            - format: uri
+            - additionalProperties: false
+              properties:
+                url: {format: uri}
+                ref: {type: string}
+                path: {type: string}
+              required: [url]
+        required: [git]
+    propertyNames:      {pattern: '^[a-z_][a-z0-9_]+$'}
+properties:
+  name:                 {type: 'string'}
+  version:              {type: 'string'}
+  description:          {type: 'string'}
+  homepage:             {format: 'uri'}
+  repository:           {format: 'uri'}
+  issue_tracker:        {format: 'uri'}
+  documentation:        {format: 'uri'}
+  dependencies:         {$ref: '#$defs/dependencies'}
+  dev_dependencies:     {$ref: '#$defs/dependencies'}
+  dependency_overrides: {$ref: '#$defs/dependencies'}
+  environment:
+    type: object
+    additionalProperties: {type: string}
+  executables:
+    type: object
+    additionalProperties: {type: string}
+  platforms:
+    type: object
+    additionalProperties: false
+    properties:
+      android:  {const: null}
+      ios:      {const: null}
+      linux:    {const: null}
+      macos:    {const: null}
+      web:      {const: null}
+      windows:  {const: null}
+  publish_to:
+    anyOf:
+    - const: 'none'
+    - format: uri
+  funding:
+    items:      {format: 'uri'}
+  false_secrets:
+    items:      {type: 'string'}
+  screenshots:
+    items:
+      additionalProperties: false
+      properties:
+        description:  {type: 'string'}
+        path:         {type: 'string'}
+  topics:
+    items:      {pattern: '^[a-z][a-z0-9-]*$', minLength: 2, maxLength: 32}

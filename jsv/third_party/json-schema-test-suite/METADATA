@@ -1,0 +1,13 @@
+name: "JSON Schema Test Suite"
+description:
+    "Test suite for JSON schema"
+
+third_party {
+  url {
+    type: GIT
+    value: "https://github.com/json-schema-org/JSON-Schema-Test-Suite"
+  }
+  version: "5cc9214e82f1e0a5e9644960b6fe0166afb7b283"
+  last_upgrade_date { year: 2023 month: 08 day: 07 }
+  license_type: NOTICE
+}
