@@ -37,15 +37,12 @@ mixin _QueryExecutor<S extends Session> {
   }
 
   Stream<RowReader> query(String sql, List<Object?> params) async* {
-    final rs = await _session.execute(
-      sql,
-      parameters: _paramsForPostgres(params),
-      queryMode: QueryMode.extended,
-    );
-    yield* Stream.fromIterable(rs.map(_PostgresRowReader.new));
-    // TODO: Explore why streaming mode doesn't work
-    // final ps = await _session.prepare(sql);
-    // yield* ps.bind(params).map(_PostgresRowReader.new);
+    final ps = await _session.prepare(sql);
+    try {
+      yield* ps.bind(_paramsForPostgres(params)).map(_PostgresRowReader.new);
+    } finally {
+      await ps.dispose();
+    }
   }
 
   Future<void> script(String sql) async {
