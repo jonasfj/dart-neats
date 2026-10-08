@@ -12,44 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// # UNTRUSTED: transformers that rewrite attributes.
-///
-/// Rewriters run _before_ the sanitizer, so whatever they add is still
-/// subject to the rule set; they need no trust and no knowledge of what is
-/// allowed.
+/// # UNTRUSTED: the built-in attribute rewriters, see `HtmlRewriter`.
 library;
 
+import 'html_rewriter.dart';
 import 'html_token_sink.dart';
 
-/// A transformer calling [rewrite] with the attributes of every [tagName]
-/// element, which it may change in place.
-///
-/// ```dart
-/// rewriteAttributes('h2', (attributes) {
-///   attributes['id'] ??= slugify(attributes['title'] ?? '');
-/// })
-/// ```
-HtmlTransformer rewriteAttributes(
+/// See `HtmlRewriter.attributes`.
+HtmlRewriter rewriteAttributes(
   String tagName,
   void Function(Map<String, String> attributes) rewrite,
 ) =>
-    (next) => _RewriteAttributes(tagName, rewrite, next);
+    HtmlRewriter((next) => _RewriteAttributes(tagName, rewrite, next));
 
-/// A transformer adding the `rel` tokens returned by [rel] to every `<a>`
-/// with an `href`.
-///
-/// Typically used to [qualify outbound links][1] in user generated content:
-///
-/// ```dart
-/// addLinkRel((href) => ['ugc', 'nofollow'])
-/// ```
-///
-/// Returning `const []` leaves the link as is. [href] is the attribute value
-/// before the rule set has seen it; if the rule set later drops the `href`,
-/// the added `rel` stays.
-///
-/// [1]: https://support.google.com/webmasters/answer/96569
-HtmlTransformer addLinkRel(List<String> Function(String href) rel) =>
+/// See `HtmlRewriter.addLinkRel`.
+HtmlRewriter addLinkRel(List<String> Function(String href) rel) =>
     rewriteAttributes('a', (attributes) {
       final href = attributes['href'];
       if (href == null) {

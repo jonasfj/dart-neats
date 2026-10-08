@@ -24,20 +24,23 @@
 ///
 ///  * `<![CDATA[` is a bogus comment even inside foreign content.
 ///  * `noscript` is always RAWTEXT (as with scripting enabled).
-///  * Character references in text are left to `SaneHtmlWriter`.
+///  * Character references in text are left to `HtmlWriter`.
 ///  * `/>` is honoured on `svg` and `math` only, not on elements inside
 ///    foreign content.
 ///
-/// https://html.spec.whatwg.org/multipage/parsing.html#tokenization
+/// Spec: [tokenization][1].
+///
+/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#tokenization
 library;
 
 import '../html_token_sink.dart';
 import 'ascii.dart';
 import 'entities.dart';
 
-/// Elements whose content is text until the matching end tag.
+/// Elements whose content is text until the matching end tag, per the
+/// ["in body" insertion mode][1].
 ///
-/// https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody
+/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody
 const _rawTextElements = <String>{
   'iframe',
   'noembed',
@@ -137,7 +140,9 @@ final class _StreamingTokenizer {
     }
   }
 
-  /// https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state
+  /// The [tag name state][1].
+  ///
+  /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#tag-name-state
   String _tagName() {
     final start = _pos;
     while (_pos < _len) {
@@ -152,8 +157,9 @@ final class _StreamingTokenizer {
 
   /// Parses attributes up to and including the closing `>`; the first
   /// occurrence of an attribute wins. Sets [_selfClosing]. Returns `null` on
-  /// EOF inside the tag.
-  /// https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state
+  /// EOF inside the tag. The [before attribute name state][1] and following.
+  ///
+  /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-name-state
   Map<String, String>? _attributes() {
     var attributes = const <String, String>{};
     _selfClosing = false;
@@ -203,7 +209,9 @@ final class _StreamingTokenizer {
     return null;
   }
 
-  /// https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-value-state
+  /// The [before attribute value state][1] and following.
+  ///
+  /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#before-attribute-value-state
   String _attributeValue() {
     if (_pos >= _len) {
       return '';
@@ -229,8 +237,9 @@ final class _StreamingTokenizer {
     return decodeCharacterReferences(_html, start, end);
   }
 
-  /// `_pos` is just after `<!`.
-  /// https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state
+  /// `_pos` is just after `<!`: the [markup declaration open state][1].
+  ///
+  /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state
   void _markupDeclaration() {
     if (!_html.startsWith('--', _pos)) {
       // Doctype, CDATA (outside foreign content) or bogus comment.
@@ -269,8 +278,10 @@ final class _StreamingTokenizer {
     }
   }
 
-  /// Skips to the end tag of the RAWTEXT / RCDATA element [name].
-  /// https://html.spec.whatwg.org/multipage/parsing.html#rawtext-less-than-sign-state
+  /// Skips to the end tag of the RAWTEXT / RCDATA element [name], per the
+  /// [RAWTEXT less-than sign state][1].
+  ///
+  /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#rawtext-less-than-sign-state
   void _skipRawText(String name) {
     while (true) {
       final lt = _html.indexOf('</', _pos);
@@ -287,8 +298,10 @@ final class _StreamingTokenizer {
   }
 
   /// Skips script content, honouring the `<!--` ... `-->` escaping rules
-  /// under which `<script>` ... `</script>` pairs inside a comment are text.
-  /// https://html.spec.whatwg.org/multipage/parsing.html#script-data-state
+  /// under which `<script>` ... `</script>` pairs inside a comment are text;
+  /// the [script data state][1] and following.
+  ///
+  /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#script-data-state
   void _skipScriptData() {
     // While escaped, the index of the `-->` that ends the escaped state (or
     // `_len`), computed once so that this loop stays linear.

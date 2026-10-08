@@ -26,18 +26,14 @@ guard against XSS, as they also attempt to prevent the sanitized HTML from
 interfering with the page it is injected into: no `id` or `class` attributes
 unless explicitly allowed, no CSS, no `name` except on `<a>`.
 
-For anything beyond the defaults, build a sanitizer once and reuse it:
+Rules and rewriters are optional parameters:
 
 ```dart
-final sanitize = htmlSanitizer(
-  rules: RuleSet.gfm(
-    allowElementId: (id) => id.startsWith('user-content-'),
-    allowClassName: (className) => className == 'highlight',
-  ),
-  rewriters: [addLinkRel((href) => ['ugc', 'nofollow'])],
+final safe = sanitizeHtml(
+  untrusted,
+  rules: RuleSet.gfm(allowElementId: true),
+  rewriters: [HtmlRewriter.addLinkRel((href) => ['ugc', 'nofollow'])],
 );
-
-final safe = sanitize(untrusted);
 ```
 
 ## Rules
@@ -48,29 +44,29 @@ removed together with their content; attributes without a rule are removed.
 
 ```dart
 final rules = RuleSet.gfm().union(RuleSet({
-  'video': TagRule(attributes: {
-    'src': AttributeRule.url,
-    'controls': AttributeRule.any,
+  'video': ElementRule(attributes: {
+    'src': AttributeRule.url(),
+    'controls': AttributeRule.any(),
   }),
-  'iframe': TagRule(attributes: {
-    'src': AttributeRule.urlWhere((u) => u.host == 'www.youtube.com'),
+  'iframe': ElementRule(attributes: {
+    'src': AttributeRule.url((u) => u.host == 'www.youtube.com'),
     'width': AttributeRule.where((v) => int.tryParse(v) != null),
   }),
 }));
 ```
 
-An `AttributeRule` only ever keeps or drops a value (`AttributeRule.tokens`
-drops individual tokens of `class`-like lists); it never rewrites. Rewriting,
-such as adding `rel="ugc"` to links or ids to headings, is done by
-_rewriters_ (`addLinkRel`, `rewriteAttributes`) which run before the rules and
-therefore cannot add anything the rules would not allow.
+An `AttributeRule` only ever keeps or drops a value; it never rewrites. So
+`union` keeps what either rule set keeps and `intersection` what both keep,
+with no surprises. Rewriting, such as adding `rel="ugc"` to links, ids to
+headings, or removing all but a few class names, is done by _rewriters_
+(`addLinkRel`, `rewriteAttributes`) which run before the rules and therefore
+cannot add anything the rules would not allow.
 
 `RuleSet(...)` refuses grants that defeat the purpose of sanitizing and throws
 `UnsupportedError`: `script`, `style`, `base`, `meta`, `link`, `form`, `svg`,
 `math`, ... as elements; `on*`, `style`, `srcdoc`, `is`, `form*`, `ping`, ...
 as attributes; and URL attributes (`href`, `src`, `cite`, ...) bound to
-anything but `AttributeRule.url` / `urlWhere` (`srcset` to
-`AttributeRule.srcset`). `RuleSet.unsafe(...)` waives these checks for callers
+anything but `AttributeRule.url` (`srcset` to `AttributeRule.srcset`). `RuleSet.unsafe(...)` waives these checks for callers
 who have reviewed what they allow.
 
 ## The guarantee
@@ -116,22 +112,22 @@ the writer never emits a raw `<`, always double-quotes attribute values with
 is the whole argument; it does not depend on how the input was parsed.
 
 ```
-input ─► HtmlTokenizer ─► impliedEndTags ─► rewriters ─► sanitizer(RuleSet) ─► SaneHtmlWriter ─► output
-         (untrusted)      (untrusted)       (untrusted)   (trusted)             (trusted)
+input ─► HtmlTokenizer ─► HtmlRewriter.impliedEndTags() ─► rewriters ─► HtmlRewriter.sanitizer(rules) ─► HtmlWriter ─► output
+         (untrusted)      (untrusted)                    (untrusted)   (trusted)                       (trusted)
 ```
 
-Everything between tokenizer and writer is an `HtmlTransformer`; the pieces
-are exported from `package:sanitize_html/tokens.dart` for custom pipelines.
+Everything between tokenizer and writer is an `HtmlRewriter`; `HtmlTokenizer`,
+`HtmlTokenSink` and `HtmlWriter` are exported too, for custom pipelines.
 
 The **trusted base** is small and reviewable:
 
- * [`lib/src/sane_html_writer.dart`](lib/src/sane_html_writer.dart): the only
+ * [`lib/src/html_writer.dart`](lib/src/html_writer.dart): the only
    code that writes output. Documents the tokenizer-state argument with
    references to the HTML specification.
  * [`lib/src/url_policy.dart`](lib/src/url_policy.dart): which URLs may appear
    in URL attributes, and why `Uri.parse` is not used.
  * [`lib/src/attribute_rule.dart`](lib/src/attribute_rule.dart),
-   [`lib/src/tag_rule.dart`](lib/src/tag_rule.dart),
+   [`lib/src/element_rule.dart`](lib/src/element_rule.dart),
    [`lib/src/rule_set.dart`](lib/src/rule_set.dart): how rules are applied.
  * [`lib/src/grant_assertions.dart`](lib/src/grant_assertions.dart): what a
    checked `RuleSet` refuses, and why.

@@ -17,8 +17,8 @@ library;
 
 import 'gfm_rules.dart' show gfmRuleSet;
 import 'grant_assertions.dart';
-import 'sane_html_writer.dart' show isWritableAttributeName, isWritableTagName;
-import 'tag_rule.dart';
+import 'html_writer.dart' show isWritableAttributeName, isWritableTagName;
+import 'element_rule.dart';
 
 /// The elements a sanitizer keeps, and how their attributes are filtered.
 ///
@@ -26,19 +26,19 @@ import 'tag_rule.dart';
 ///
 /// ```dart
 /// final rules = RuleSet.gfm().union(RuleSet({
-///   'iframe': TagRule(attributes: {
-///     'src': AttributeRule.urlWhere((u) => u.host == 'www.youtube.com'),
-///     'width': AttributeRule.any,
-///     'height': AttributeRule.any,
+///   'iframe': ElementRule(attributes: {
+///     'src': AttributeRule.url((u) => u.host == 'www.youtube.com'),
+///     'width': AttributeRule.any(),
+///     'height': AttributeRule.any(),
 ///   }),
 /// }));
 /// ```
 final class RuleSet {
-  final Map<String, TagRule> _rules;
+  final Map<String, ElementRule> _rules;
 
   /// Creates a rule set allowing exactly the elements in [rules].
   ///
-  /// Throws [ArgumentError] for names `SaneHtmlWriter` cannot write (tag
+  /// Throws [ArgumentError] for names `HtmlWriter` cannot write (tag
   /// names must match `[a-z][a-z0-9._-]*`, attribute names
   /// `[a-z][a-z0-9_:.-]*`).
   ///
@@ -49,13 +49,15 @@ final class RuleSet {
   ///    `body`, `frameset`, `frame`, `form`, `object`, `embed`, `applet`,
   ///    `isindex`, `noscript`, `noembed`, `noframes`, `svg`, `math`;
   ///  * attributes `on*`, `style`, `srcdoc`, `is`, `form`, `formaction`,
-  ///    `formtarget`, `formmethod`, `formenctype`, `ping`, `attributionsrc`;
+  ///    `formtarget`, `formmethod`, `formenctype`, `ping`, `attributionsrc`,
+  ///    `popovertarget`, `popovertargetaction`, `command`, `commandfor`,
+  ///    `shadowrootmode`;
   ///  * URL-valued attributes (`href`, `src`, `cite`, `action`, `poster`,
-  ///    `data`, ... and `srcset`) bound to anything but [AttributeRule.url],
-  ///    [AttributeRule.urlWhere] (or [AttributeRule.srcset]).
+  ///    `data`, ... and `srcset`) bound to anything but [AttributeRule.url]
+  ///    (or [AttributeRule.srcset]).
   ///
   /// Use [RuleSet.unsafe] to waive these checks.
-  RuleSet(Map<String, TagRule> rules) : this._(rules, checked: true);
+  RuleSet(Map<String, ElementRule> rules) : this._(rules, checked: true);
 
   /// Creates a rule set allowing exactly the elements in [rules], without
   /// the grant checks of [RuleSet.new].
@@ -63,9 +65,10 @@ final class RuleSet {
   /// The output is still well-formed and contains only these elements and
   /// attributes, but nothing stops the rules from allowing `<script>` or
   /// `onclick`. Only for callers who have reviewed what they allow.
-  RuleSet.unsafe(Map<String, TagRule> rules) : this._(rules, checked: false);
+  RuleSet.unsafe(Map<String, ElementRule> rules)
+      : this._(rules, checked: false);
 
-  RuleSet._(Map<String, TagRule> rules, {required bool checked})
+  RuleSet._(Map<String, ElementRule> rules, {required bool checked})
       : _rules = Map.unmodifiable(rules) {
     for (final MapEntry(key: name, value: rule) in rules.entries) {
       if (!isWritableTagName(name)) {
@@ -90,13 +93,14 @@ final class RuleSet {
 
   /// Rules modelled on the [sanitization GitHub applies to Markdown][1].
   ///
-  /// `id` attributes are kept only if [allowElementId] accepts them, and
-  /// `class` attributes only keep the class names [allowClassName] accepts.
+  /// `id` and `class` attributes are dropped unless [allowElementId] /
+  /// [allowClassName] is `true`; use a rewriter to limit which values are
+  /// kept.
   ///
   /// [1]: https://github.com/jch/html-pipeline/blob/master/lib/html/pipeline/sanitization_filter.rb
   factory RuleSet.gfm({
-    bool Function(String id)? allowElementId,
-    bool Function(String className)? allowClassName,
+    bool allowElementId = false,
+    bool allowClassName = false,
   }) =>
       gfmRuleSet(
         allowElementId: allowElementId,
@@ -105,9 +109,7 @@ final class RuleSet {
 
   /// A rule set allowing elements allowed by either rule set.
   ///
-  /// For an element in both, an attribute is kept if either rule keeps it;
-  /// two [AttributeRule.tokens] rules combine per token, otherwise the value
-  /// is that of this rule set's rule if it keeps it, else the other's.
+  /// For an element in both, an attribute is kept if either rule keeps it.
   ///
   /// A union with a [RuleSet.unsafe] is as unsafe as that rule set.
   RuleSet union(RuleSet other) => RuleSet._combined(Map.unmodifiable({
@@ -121,6 +123,9 @@ final class RuleSet {
 
   /// A rule set allowing only elements allowed by both rule sets, keeping
   /// only attributes kept by both rules.
+  ///
+  /// Sanitizing with it is the same as sanitizing with this rule set and
+  /// then with [other].
   RuleSet intersection(RuleSet other) => RuleSet._combined(Map.unmodifiable({
         for (final MapEntry(key: name, value: rule) in _rules.entries)
           if (other._rules[name] case final theirs?)
@@ -131,5 +136,5 @@ final class RuleSet {
 /// Package-private operations on [RuleSet]; not exported.
 extension RuleSetExtension on RuleSet {
   /// The rule for an element called [name], or `null` if it must be dropped.
-  TagRule? lookup(String name) => _rules[name];
+  ElementRule? lookup(String name) => _rules[name];
 }

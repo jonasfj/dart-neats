@@ -13,11 +13,23 @@
 // limitations under the License.
 
 /// Character helpers shared by the streaming tokenizers.
+///
+/// ## Why `codeUnitAt` is sound on UTF-16 strings
+///
+/// Every character test in this package compares a UTF-16 code unit with
+/// ASCII values (`< 0x80`), and every index at which a string is cut or
+/// escaped is the index of such an ASCII code unit. Surrogate halves are
+/// `0xD800`-`0xDFFF` and every other non-ASCII code unit is `>= 0x80`, so
+/// neither can ever satisfy an ASCII test: a supplementary character is
+/// never mistaken for a delimiter and never split, and `String.fromCharCodes`
+/// / `StringBuffer.writeCharCode` pass unrecognized code units through
+/// unchanged. Nothing here classifies non-ASCII characters.
 library;
 
-/// Elements that switch the tokenizer into foreign content, where `/>` on
-/// the element itself closes it.
-/// https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inforeign
+/// Elements that switch the tokenizer into [foreign content][1], where `/>`
+/// on the element itself closes it.
+///
+/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inforeign
 const foreignContentElements = <String>{'math', 'svg'};
 
 /// Whether [c] is an ASCII letter.

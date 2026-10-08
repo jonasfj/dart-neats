@@ -22,13 +22,11 @@
 ///
 /// ## Why the browser sees what we validated
 ///
-/// `SaneHtmlWriter` escapes attribute values exactly, so the string a browser
+/// `HtmlWriter` escapes attribute values exactly, so the string a browser
 /// decodes from the output is the string these functions accepted, up to the
-/// parser's input preprocessing (CR and CRLF become LF, U+0000 becomes
-/// U+FFFD):
-/// https://html.spec.whatwg.org/multipage/parsing.html#preprocessing-the-input-stream
-/// That cannot change a verdict: [isSafeUrl] removes CR and LF and refuses
-/// U+0000 before deciding.
+/// parser's [input preprocessing][1] (CR and CRLF become LF, U+0000 becomes
+/// U+FFFD). That cannot change a verdict: [cleanUrl] removes CR and LF and
+/// refuses U+0000 before deciding.
 ///
 /// ## Why not `Uri.parse`
 ///
@@ -38,17 +36,31 @@
 /// `jav\tascript:alert(1)` is a `javascript:` URL to a browser but a relative
 /// path to [Uri]. This file mirrors the browser's preprocessing and then
 /// applies a scheme rule that is strictly more conservative than the
-/// browser's. Where [Uri] would still disagree with the browser about the
-/// _host_ (`\` and userinfo, below) the URL is refused, so that a `Uri`
-/// handed to `AttributeRule.urlWhere` has the host the browser will use.
+/// browser's.
+///
+/// ## Why `Uri` then agrees with the browser about the host
+///
+/// `AttributeRule.url(where)` hands a [Uri] to user code, typically to check
+/// `uri.host`. The forms where a WHATWG parser and [Uri] would find different
+/// hosts are refused, so the host is the one the browser will use: `\` in
+/// place of `/`, fewer or more than two slashes after `http:`/`https:`,
+/// userinfo (`good.com@evil.com`) and percent-encoding in the authority.
+/// None has a legitimate use in sanitized content. The host is otherwise
+/// taken literally: it is not IDNA-mapped and IPv4 forms are not
+/// canonicalized, so comparing it to an _allowlist_ is sound while a denylist
+/// is not.
+///
+/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#preprocessing-the-input-stream
 library;
 
-const _allowedSchemes = {'https', 'http', 'mailto'};
+const _specialSchemes = {'https', 'http'};
+const _otherSchemes = {'mailto'};
 
-/// Whether [url] may be used as the value of a URL attribute.
+/// [url] as the browser will parse it, or `null` if it may not be used as
+/// the value of a URL attribute.
 ///
 /// Allows `http:`, `https:`, `mailto:` and relative URLs.
-bool isSafeUrl(String url) {
+String? cleanUrl(String url) {
   // Browsers remove ASCII tab and newline anywhere and strip leading/trailing
   // C0 controls and spaces before parsing. Do the same, except that any other
   // control character is refused outright: it has no legitimate use, and
@@ -62,18 +74,18 @@ bool isSafeUrl(String url) {
       continue;
     }
     if (c < 0x20 || c == 0x7F) {
-      return false;
+      return null;
     }
     cleaned?.writeCharCode(c);
   }
-  final candidate = (cleaned?.toString() ?? url).trim();
+  final candidate = _stripSpaces(cleaned?.toString() ?? url);
 
   // Browsers treat `\` as `/` in special schemes, RFC 3986 parsers do not, so
   // `\\evil.com` is `//evil.com` to the browser and a relative path to `Uri`.
   // Refusing `\` anywhere keeps both readings identical.
   // https://url.spec.whatwg.org/#special-scheme
   if (candidate.contains(r'\')) {
-    return false;
+    return null;
   }
 
   // A browser scheme is `[a-zA-Z][a-zA-Z0-9+.-]*` followed by `:`:
@@ -82,70 +94,118 @@ bool isSafeUrl(String url) {
   // None of those characters is `/`, `?` or `#`, so every browser scheme is
   // terminated by the first `:` that precedes the first `/`, `?` or `#`.
   // Treating any such prefix as a scheme (RFC 3986 section 4.2) accepts
-  // exactly the browser schemes in [_allowedSchemes] and rejects everything
-  // else, including strings a browser would parse as relative URLs.
+  // exactly the allowed browser schemes and rejects everything else,
+  // including strings a browser would parse as relative URLs.
   // https://www.rfc-editor.org/rfc/rfc3986#section-4.2
   var rest = 0;
+  var special = false;
   for (var i = 0; i < candidate.length; i++) {
     final c = candidate.codeUnitAt(i);
     if (c == 0x2F /* / */ || c == 0x3F /* ? */ || c == 0x23 /* # */) {
       break;
     }
     if (c == 0x3A /* : */) {
-      if (!_allowedSchemes.contains(_asciiLowerCase(candidate, 0, i))) {
-        return false;
+      final scheme = _asciiLowerCase(candidate, 0, i);
+      special = _specialSchemes.contains(scheme);
+      if (!special && !_otherSchemes.contains(scheme)) {
+        return null;
       }
       rest = i + 1;
       break;
     }
   }
 
-  // Refuse userinfo. In an authority (`//...`) the host starts after the last
-  // `@`, so `https://good.com@evil.com` goes to evil.com; `Uri` agrees, but
-  // the combination with other quirks has a long history of parser
-  // disagreement, and there is no legitimate use in sanitized content.
+  // After `http:`/`https:` a browser skips any number of slashes and takes
+  // the host from there, so `https:evil.com` and `https:///evil.com` reach
+  // evil.com; RFC 3986 reads them as a path. Require exactly `//` followed by
+  // a host character so both readings agree.
+  // https://url.spec.whatwg.org/#special-authority-ignore-slashes-state
+  if (special) {
+    if (!candidate.startsWith('//', rest) || rest + 2 >= candidate.length) {
+      return null;
+    }
+    if (_endsAuthority(candidate.codeUnitAt(rest + 2))) {
+      return null;
+    }
+  }
+
+  // In an authority (`//...`) refuse userinfo and percent-encoding. The host
+  // starts after the last `@`, so `https://good.com@evil.com` goes to
+  // evil.com, and browsers percent-decode the host (`e%76il.com` is
+  // evil.com) while `Uri` does not. Neither has a legitimate use.
   // https://url.spec.whatwg.org/#authority-state
+  // https://url.spec.whatwg.org/#concept-host-parser
   if (candidate.startsWith('//', rest)) {
     for (var i = rest + 2; i < candidate.length; i++) {
       final c = candidate.codeUnitAt(i);
-      if (c == 0x2F /* / */ || c == 0x3F /* ? */ || c == 0x23 /* # */) {
+      if (_endsAuthority(c)) {
         break;
       }
-      if (c == 0x40 /* @ */) {
-        return false;
+      if (c == 0x40 /* @ */ || c == 0x25 /* % */) {
+        return null;
       }
     }
   }
-  return true;
+  return candidate;
 }
 
-/// Whether [srcset] is a well-formed `srcset` whose every URL is safe.
+/// The candidate URLs of [srcset] as the browser will parse them, or `null`
+/// if [srcset] is not a well-formed `srcset` whose every URL is safe.
 ///
-/// Candidates are comma separated; each is a URL optionally followed by a
-/// width (`100w`) or density (`1.5x`) descriptor. Anything else is refused.
-/// https://html.spec.whatwg.org/multipage/images.html#parse-a-srcset-attribute
-bool isSafeSrcset(String srcset) {
+/// [Candidates][1] are comma separated; each is a URL optionally followed by
+/// a width (`100w`) or density (`1.5x`) descriptor. Anything else is refused.
+///
+/// [1]: https://html.spec.whatwg.org/multipage/images.html#parse-a-srcset-attribute
+List<String>? cleanSrcset(String srcset) {
+  final urls = <String>[];
   for (final candidate in srcset.split(',')) {
     final parts = candidate.trim().split(_asciiWhitespace);
-    if (parts.length > 2 || parts.first.isEmpty || !isSafeUrl(parts.first)) {
-      return false;
+    if (parts.length > 2 || parts.first.isEmpty) {
+      return null;
     }
     if (parts.length == 2 && !_srcsetDescriptor.hasMatch(parts[1])) {
-      return false;
+      return null;
     }
+    final url = cleanUrl(parts.first);
+    if (url == null) {
+      return null;
+    }
+    urls.add(url);
   }
-  return true;
+  return urls;
 }
 
 final _asciiWhitespace = RegExp(r'[ \t\n\f\r]+');
 final _srcsetDescriptor = RegExp(r'^(?:[0-9]+w|[0-9]*\.?[0-9]+x)$');
 
+bool _endsAuthority(int c) =>
+    c == 0x2F /* / */ || c == 0x3F /* ? */ || c == 0x23 /* # */;
+
+/// [s] without leading and trailing spaces.
+///
+/// The browser strips leading and trailing C0 controls and spaces; the
+/// controls were refused above, and `String.trim` would also strip Unicode
+/// whitespace the browser keeps.
+String _stripSpaces(String s) {
+  var start = 0;
+  var end = s.length;
+  while (start < end && s.codeUnitAt(start) == 0x20) {
+    start++;
+  }
+  while (end > start && s.codeUnitAt(end - 1) == 0x20) {
+    end--;
+  }
+  return start == 0 && end == s.length ? s : s.substring(start, end);
+}
+
 /// `s[start..end)` with only `A`-`Z` lowercased, like the URL parser does
 /// for schemes.
 ///
 /// Unicode case folding (`String.toLowerCase`) would map other characters to
-/// ASCII letters (e.g. U+212A KELVIN SIGN to `k`), which the browser does not.
-/// https://url.spec.whatwg.org/#scheme-state
+/// ASCII letters (e.g. U+212A KELVIN SIGN to `k`), which the
+/// [URL parser][1] does not.
+///
+/// [1]: https://url.spec.whatwg.org/#scheme-state
 String _asciiLowerCase(String s, int start, int end) {
   final codeUnits = List<int>.generate(end - start, (i) {
     final c = s.codeUnitAt(start + i);

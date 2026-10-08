@@ -14,14 +14,14 @@
 
 /// The token interface everything in this package speaks.
 ///
-/// A tokenizer pushes tokens into an [HtmlTokenSink]; transformers are sinks
-/// that push into the next sink; `SaneHtmlWriter` is the sink that produces
+/// A tokenizer pushes tokens into an [HtmlTokenSink]; rewriters are sinks
+/// that push into the next sink; `HtmlWriter` is the sink that produces
 /// output.
 library;
 
 /// Receives HTML tokens.
 ///
-/// There are exactly three kinds of token, matching what `SaneHtmlWriter` can
+/// There are exactly three kinds of token, matching what `HtmlWriter` can
 /// write: comments, doctypes and CDATA sections are not tokens.
 abstract base class HtmlTokenSink {
   /// Text `source[start..end)` as written in HTML source, _undecoded_: it is
@@ -40,9 +40,3 @@ abstract base class HtmlTokenSink {
   /// An end tag.
   void endTag(String name);
 }
-
-/// Wraps [next] in a sink that transforms the tokens it receives.
-///
-/// Transformers compose right to left:
-/// `a(b(c(writer)))` feeds `a` first, `c` last.
-typedef HtmlTransformer = HtmlTokenSink Function(HtmlTokenSink next);

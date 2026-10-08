@@ -1,8 +1,8 @@
 # Design of `package:sanitize_html`
 
-This document explains the opinions baked into the package and why they were
-made. The README says what the package does; this says why it is shaped the
-way it is, and exactly which code a reviewer has to trust.
+This document explains the opinions baked into the package and why they hold.
+The README says what the package does; this says why it is shaped the way it
+is, and exactly which code a reviewer has to trust.
 
 ## The one idea
 
@@ -25,29 +25,28 @@ Everything else in the design follows from protecting that property.
 ```mermaid
 flowchart LR
     in([untrusted String])
-    tok[HtmlTokenizer<br/>streaming / simple / dom]
-    iet[impliedEndTags]
-    rw[rewriters<br/>addLinkRel, rewriteAttributes]
-    san[sanitizer RuleSet]
-    w[SaneHtmlWriter]
-    out([trusted String])
-
-    in --> tok -->|HtmlTokenSink| iet -->|HtmlTokenSink| rw -->|HtmlTokenSink| san -->|HtmlTokenSink| w --> out
-
-    classDef untrusted fill:#fff,stroke:#999,stroke-dasharray: 4 2
-    classDef trusted fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
-    class tok,iet,rw untrusted
-    class san,w trusted
+    subgraph U[untrusted: a bug here only makes output uglier]
+        direction LR
+        tok[HtmlTokenizer] --> iet["HtmlRewriter.impliedEndTags()"] --> rw[rewriters]
+    end
+    subgraph T[trusted: the safety argument lives here]
+        direction LR
+        san["HtmlRewriter.sanitizer(rules)"] --> w[HtmlWriter]
+    end
+    out([sanitized String])
+    in --> tok
+    rw --> san
+    w --> out
 ```
 
-Solid green boxes are the trusted surface. Dashed boxes are untrusted: a bug
-there can make output uglier (markup shown as text, content dropped), never
-unsafe.
+Each arrow is an `HtmlTokenSink`.
 
-Everything between tokenizer and writer is an `HtmlTransformer`, a function
-`HtmlTokenSink Function(HtmlTokenSink next)`. Order matters in exactly one
-place: the sanitizer must be last. Everything before it is filtered by the
-rules; everything after it would be trusted, so there is nothing after it.
+Everything between tokenizer and writer is an `HtmlRewriter`: a value that
+wraps the next `HtmlTokenSink` in a sink of its own (`bind(next)`). It is a
+class rather than a function type so that the built-in rewriters are its
+named constructors and a custom one is `HtmlRewriter(MySink.new)`. Order matters in exactly one
+place: the sanitizer is last. Everything before it is filtered by the rules;
+anything after it would have to be trusted, so there is nothing after it.
 
 ## The trusted surface
 
@@ -56,10 +55,10 @@ safety means reviewing these.
 
 | File | What it decides | Why it must be trusted |
 |---|---|---|
-| `lib/src/sane_html_writer.dart` | The output grammar: escaping, name alphabets, void elements, balancing, depth. | It is the only code that writes output. If it is correct, the browser creates no element or attribute that was not pushed into it. |
+| `lib/src/html_writer.dart` | The output grammar: escaping, name alphabets, void elements, balancing, depth. | It is the only code that writes output. If it is correct, the browser creates no element or attribute that was not pushed into it. |
 | `lib/src/url_policy.dart` | Which strings may be the value of a URL attribute. | A `javascript:` URL is a valid attribute value to the writer; only the policy stops it. |
 | `lib/src/attribute_rule.dart` | How each `AttributeRule` keeps or drops a value. | It is where the URL policy is actually invoked. A bug here could keep a value the policy rejected. |
-| `lib/src/tag_rule.dart`, `lib/src/rule_set.dart` | Which elements have rules, which attributes each keeps, how rule sets combine. | They decide what reaches the writer. |
+| `lib/src/element_rule.dart`, `lib/src/rule_set.dart` | Which elements have rules, which attributes each keeps, how rule sets combine. | They decide what reaches the writer. |
 | `lib/src/grant_assertions.dart` | What a checked `RuleSet()` refuses to allow. | This is the list that turns "the browser creates nothing extra" into "no script runs". |
 | `lib/src/gfm_rules.dart` | The default allowlists. | Policy data. No logic, but a wrong entry is a wrong default. |
 
@@ -96,7 +95,7 @@ nobody pushed — so the writer refuses it, citing
 > An image start tag token is handled by the tree builder, but it is not in
 > this list because it is not an element; it gets turned into an img element.
 
-The proof sketch lives as the library comment of `sane_html_writer.dart`,
+The proof sketch lives as the library comment of `html_writer.dart`,
 point by point with links to the tokenizer states involved. It is short on
 purpose: a 30-minute auditor should be able to follow it end to end.
 
@@ -104,18 +103,18 @@ purpose: a 30-minute auditor should be able to follow it end to end.
 
 ### The writer owns the grammar, and only the grammar
 
-An earlier iteration had the writer also refuse a list of forbidden elements
-(`script`, `style`, ...) and `on*` attributes. It was removed. Two reasons:
-
-* It blurred the argument. "The writer is safe" became "the writer is safe
-  given this list", and the list had to be kept in sync with the rules.
-* It was the wrong layer. Whether `<script>` is acceptable is a policy
-  question; whether `<scr ipt>` can be written is a grammar question. Mixing
-  them meant the writer had to know about SVG, forms and `iframe`.
-
-Now the writer's only opinions are: escape text, quote and escape values,
+The writer's only opinions are: escape text, quote and escape values,
 restrict name alphabets, know the void elements, balance, cap depth, refuse
-`image`. Everything else is a `RuleSet` decision.
+`image`. It has no list of forbidden elements and no idea what `on*` means.
+
+Whether `<script>` is acceptable is a *policy* question; whether `<scr ipt>`
+can be written is a *grammar* question. Keeping them apart keeps the safety
+argument in two independent halves: "the browser sees exactly what was written" holds unconditionally
+and is argued from the tokenizer spec alone; "the rules grant nothing
+dangerous" holds for checked rule sets and is argued from a short list. If the
+writer also carried a forbidden list, the first half would become "the writer
+is safe given this list", the list would have to be kept in sync with the
+rules, and the writer would need to know about SVG, forms and `iframe`.
 
 ### Names that break the grammar throw
 
@@ -128,20 +127,24 @@ construction, so the sanitizer only ever passes names the writer accepts
 
 ### Rules filter; rewriters rewrite
 
-The first prototype had a `modifyAttributes` callback on `TagRule`, used to
-add `rel="ugc"` to links. It was removed and `AttributeRule` is now
-filtering-only (`tokens` drops individual tokens, which is still filtering).
+An `AttributeRule` maps a value to *keep* or *drop*. It never changes a value,
+not even by removing tokens from a `class` list. That makes a rule a plain
+predicate on values, and combining rule sets is set algebra:
 
-The problem with a modifier inside the rule set is that its output has to be
-re-validated — a modifier can write `href="javascript:..."` — so there was a
-second "invariant" pass after every modifier, and the rule set stopped being
-declarative. Splitting the concerns made both halves simpler:
+* `a.union(b)` keeps what either keeps — `a(v) || b(v)`;
+* `a.intersection(b)` keeps what both keep — `a(v) && b(v)`, which is the
+  same as sanitizing with `a` and then with `b`.
 
-* An `AttributeRule` maps a value to *keep* or *drop*. It can be reasoned
-  about without running it.
-* A rewriter is an ordinary transformer placed *before* the sanitizer. It can
-  do anything it likes, because the rules see its output. It needs no trust
-  and no knowledge of what is allowed.
+Neither needs a special case, and a URL check can never be followed by
+something that alters the URL it checked. A rule that removed tokens from a
+value would break exactly this: intersected with a URL rule it would split
+`http://x/ javascript:alert(1)` on the space *after* the URL check.
+
+Anything that *changes* content — adding `rel="ugc"` to external links, ids
+to headings, keeping only some class names — is an `HtmlRewriter`
+placed *before* the sanitizer. It may do anything it likes,
+because the rules see its output. It needs no trust and no knowledge of what
+is allowed.
 
 The orthogonality is the point: a rewriter that adds ids to headings does not
 need to know whether ids are allowed, and a rule set that allows ids does not
@@ -149,8 +152,8 @@ need to know where they come from.
 
 ### "Baseline" safety is three things, not one
 
-We spent a while on "a baseline rule set that always applies". It turned out
-to be three different concerns that want three different mechanisms:
+There is no single "baseline rule set that always applies". Safety is three
+different concerns, each with the mechanism and cost that fit it:
 
 | Concern | Mechanism | Cost |
 |---|---|---|
@@ -158,9 +161,9 @@ to be three different concerns that want three different mechanisms:
 | Rules must not grant script execution or host-document control | **grant assertions** at `RuleSet()` construction | zero per document |
 | URL values must have a safe scheme | **URL policy**, applied where `AttributeRule.url` is declared | per URL attribute |
 
-The alternative — a runtime "always removed" pass over every attribute of
-every element — cost a set lookup per attribute per document to enforce
-something that is already decided when the rule set is written.
+A runtime "always removed" pass over every attribute of every element would
+spend a set lookup per attribute per document to enforce something that is
+already decided when the rule set is written.
 
 ### Grant assertions are opt-out, and what they cover
 
@@ -182,16 +185,20 @@ sanitizing; `RuleSet.unsafe(...)` waives them. The list is deliberately about
 * **Rejected attributes**: `on*`, `style`, `srcdoc`, `is`, `form`,
   `formaction`, `formtarget`, `formmethod`, `formenctype`, `ping`,
   `attributionsrc`.
-* **URL attributes must be bound explicitly** to `AttributeRule.url` or
-  `urlWhere` (`srcset` to `AttributeRule.srcset`). We chose to throw on
-  `'href': AttributeRule.any` rather than silently upgrade it, so the policy
-  is visible where it is declared and there is one encoding per concept.
+* **Rejected attributes, host-document control**: `popovertarget`,
+  `popovertargetaction`, `command`, `commandfor` (a button operating any
+  element on the page by id), `shadowrootmode` (a template becoming its
+  parent's shadow root).
+* **URL attributes must be bound explicitly** to `AttributeRule.url`
+  (`srcset` to `AttributeRule.srcset`). `'href': AttributeRule.any()` throws
+  rather than being silently upgraded, so the policy is visible where it is
+  declared and there is one encoding per concept.
 
 ### One URL policy, and why not `Uri.parse`
 
 All URL attributes get the same policy: `http`, `https`, `mailto`, or
-relative. (An earlier split into "link" and "resource" schemes was dropped:
-`mailto:` on an `<img src>` is harmless and the split doubled the surface.)
+relative. There is no separate "resource" policy for `src`: `mailto:` on an
+`<img src>` is harmless, and one policy is half the surface of two.
 
 `dart:core`'s `Uri` implements RFC 3986; browsers implement the WHATWG URL
 Standard. They disagree precisely where attackers look: browsers strip tab and
@@ -202,10 +209,17 @@ then applies a scheme rule that is strictly more conservative than the
 browser's: anything before the first `:` that precedes the first `/`, `?` or
 `#` is treated as a scheme and must be on the allowlist.
 
-Two further rejections exist so that `AttributeRule.urlWhere`'s `Uri` has the
-*host the browser will use*: `\` anywhere (browsers treat it as `/` in special
-schemes, `Uri` does not) and userinfo (`https://good.com@evil.com`). Neither
-has a legitimate use in sanitized content.
+`AttributeRule.url(where)` hands user code a `Uri`, so the policy also
+refuses every form where RFC 3986 and the WHATWG parser disagree about the
+*host*: `\` anywhere (browsers treat it as `/` in special schemes), anything
+but exactly `//` after `http:`/`https:` (browsers skip any number of
+slashes, so `https:evil.com` reaches evil.com), userinfo
+(`https://good.com@evil.com`) and percent-encoding in the authority
+(`e%76il.com`). None has a legitimate use in sanitized content. What remains
+— IDN hosts and exotic IPv4 spellings — is passed through literally: a host
+*allowlist* is sound, a denylist is not, and the documentation says so. Only
+ASCII spaces are stripped at the ends, as the browser does; `String.trim`
+would also strip Unicode whitespace that the browser keeps.
 
 ### The token interface is three methods and an eager map
 
@@ -219,7 +233,7 @@ abstract base class HtmlTokenSink {
 
 * **Three tokens only.** Comments, doctypes and CDATA are not tokens because
   the writer never emits them. The vocabulary *is* the output grammar, which
-  keeps every transformer trivially total.
+  keeps every rewriter trivially total.
 * **Text is an undecoded source range.** The writer escapes it directly, so
   `&copy;` stays `&copy;` with no decode/re-encode round trip and no
   double-decoding risk.
@@ -227,12 +241,11 @@ abstract base class HtmlTokenSink {
   (which need no end tag) and foreign content. Tokenizers emit the end tag
   themselves for `<svg/>`/`<math/>`; `<div/>` nests like `<div>`, as in a
   browser.
-* **Eager, owned `Map` per tag.** Lazy maps, split begin/attribute/end
-  callbacks and per-attribute callbacks were all considered. Profiling showed
-  the map is not a hotspot (text copying and `StringBuffer` are), and
-  callbacks make every transformer stateful. The sink owns the map and may
-  mutate it, so filtering is in place. It is an interface; it could be
-  optimised later. It probably will not need to be.
+* **Eager, owned `Map` per tag.** The map is not a hotspot (text copying and
+  `StringBuffer` are), and the alternatives — lazy maps, split
+  begin/attribute/end callbacks, per-attribute callbacks — make every
+  rewriter stateful. The sink owns the map and may mutate it, so filtering
+  is in place. It is an interface; it could be optimised later.
 
 ### The sanitizer is almost stateless
 
@@ -244,50 +257,73 @@ in the trusted path is exactly what this design exists to avoid.
 
 Implied end tags (`<p>` closed by `<div>`, `<li>` by `<li>`, ...) are useful
 for tidy, idempotent output, so they exist — as a separate, untrusted
-transformer that runs *before* the sanitizer, where a wrong guess costs
+rewriter that runs *before* the sanitizer, where a wrong guess costs
 nothing.
 
-### Two libraries
+### Depth is capped the way Blink caps it
 
-`package:sanitize_html/sanitize_html.dart` exports seven names:
-`htmlSanitizer`, `sanitizeHtml`, `RuleSet`, `TagRule`, `AttributeRule`,
-`rewriteAttributes`, `addLinkRel`. That is the whole API for someone
-sanitizing Markdown output.
+Blink stops nesting at 512 (`kMaximumHTMLParserDOMTreeDepth`): a deeper
+element is attached as a sibling of the innermost one. The writer does the
+same at 128, and `HtmlRewriter.impliedEndTags()` at 512 for the stack it uses to model the
+input. A start tag at the cap closes the innermost open element and takes its
+place. Nothing is dropped, nothing is counted, every stack stays bounded, so
+every scan of a stack is O(1) and the pipeline is linear in the input. The
+alternative — swallowing start tags beyond the cap and counting their end
+tags — desynchronizes: a swallowed `</p>` can be paid for by a swallowed
+`<b>`, leaving a `</p>` in the output that the browser answers with an empty
+`<p>` nobody pushed.
 
-`package:sanitize_html/tokens.dart` exports the building blocks for custom
-pipelines: `HtmlTokenSink`, `HtmlTransformer`, `HtmlTokenizer`, `sanitizer`,
-`impliedEndTags`, `SaneHtmlWriter`. Casual users never see them.
+### RAWTEXT content is dropped
 
-The primary entry point is a factory, `htmlSanitizer(...)`, returning a
-`String Function(String)`. Building rule sets and the transformer chain once
-and calling the result many times is the shape we want to encourage;
-`sanitizeHtml(html)` is the convenience for the default rules.
+The streaming and simple tokenizers emit no text for the content of `xmp`,
+`textarea`, `title`, `iframe` and the other RAWTEXT/RCDATA elements. Passing
+it through would be wrong: the writer escapes `<` as `&lt;`, and inside
+`<xmp>` a browser does not decode character references, so the reader would
+see a literal `&lt;`. A rule set that allows these elements gets them empty.
 
-### The writer is "sane", not "safe"
+### One library
 
-It was briefly `SafeHtmlWriter`. Renamed because it is only safe *together
-with* a checked rule set: it will happily write `<script>` if asked. What it
-guarantees unconditionally is that the output is sane — the browser sees
-exactly what was written.
+`package:sanitize_html/sanitize_html.dart` exports eight names. Five are the
+API for someone sanitizing Markdown output: `sanitizeHtml`, `RuleSet`,
+`ElementRule`, `AttributeRule`, `HtmlRewriter`. Three are the pipeline parts
+for custom pipelines: `HtmlTokenizer`, `HtmlTokenSink`, `HtmlWriter`; together
+with `HtmlRewriter.sanitizer` and `HtmlRewriter.impliedEndTags` they are
+enough to assemble `sanitizeHtml` by hand.
+
+They share one library because the boundary leaks: `sanitizeHtml` takes an
+`HtmlTokenizer`, and a custom `HtmlRewriter` is built from an `HtmlTokenSink`.
+A second import for a documented parameter is a worse experience than three
+extra names with a shared `Html` prefix.
+
+The entry point is one function, `sanitizeHtml(html, {rules, rewriters,
+tokenizer})`. There is nothing to build up front: all validation happens
+when a `RuleSet` is constructed, and the default rule set is built once, so a
+"create a sanitizer, then call it" API would only add a step.
+
+### The writer is not called "safe"
+
+`HtmlWriter` is only safe *together with* a checked rule set: it will
+happily write `<script>` if asked. What it guarantees unconditionally is that
+the browser sees exactly what was written — no more. A name promising safety
+would overstate it.
 
 ### Package-private operations are extensions, not members
 
 Operations the package needs on exported classes but users should not see
-(`TagRule.apply`, `AttributeRule.isUrlRestricted`, `RuleSet.lookup`) are
+(`ElementRule.apply`, `AttributeRule.isUrlRestricted`, `RuleSet.lookup`) are
 extension methods in the same `lib/src/` file, never re-exported. Public
 classes stay `final` with only their user-facing members, and no `Expando`
 or side tables are needed.
 
 ## Performance notes
 
-Streaming tokenizer ~20 µs, simple ~21 µs, dom ~116 µs, versus ~99 µs for
-v2 (`package:html`) on `benchmark/testdata/lorem-ipsum.md`. The writer copies
-unescaped runs with one `substring` per run, `AttributeRule.tokens` returns the
-original string when nothing was removed, and the GFM rule set is built once.
-Two O(N²) traps were found and fixed (an unbounded `indexOf('&')` per
-attribute value, an `indexOf('-->')` per `<` in script data) and are covered
-by a regression test; `String.indexOf` in the VM is not `memchr`-fast, so
-"scan to the next interesting character" loops are written by hand.
+Streaming tokenizer ~20 µs, simple ~21 µs, dom ~116 µs on
+`benchmark/testdata/lorem-ipsum.md`. The writer copies unescaped runs with one
+`substring` per run, attribute rules never allocate when they keep a value,
+and the GFM rule set is built once. `String.indexOf` in
+the VM is not `memchr`-fast, so "scan to the next interesting character" loops
+are written by hand and every scan is bounded by the current token; a
+regression test checks that pathological inputs stay linear.
 
 ## Deliberately not done
 
@@ -295,6 +331,6 @@ by a regression test; `String.indexOf` in the VM is not `memchr`-fast, so
   An `AttributeRule` sees one value. Normalize with a rewriter first.
 * `data:` image URLs.
 * Preserving comments or doctypes.
-* The v2 `allowElements` callback (open-ended element names with span-like
-  attributes). Compatibility with the v2 `sanitizeHtml` signature is an open
-  question, separate from this design.
+* Callback-style element allowlists (`bool Function(String tagName)`).
+  Element names are declared up front so that every name can be validated,
+  and every grant asserted, at construction.

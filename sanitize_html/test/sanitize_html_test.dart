@@ -15,7 +15,6 @@
 import 'package:html/dom.dart' show Element, Text;
 import 'package:html/parser.dart' show parseFragment;
 import 'package:sanitize_html/sanitize_html.dart';
-import 'package:sanitize_html/tokens.dart';
 import 'package:test/test.dart';
 
 const tokenizers = {
@@ -24,17 +23,50 @@ const tokenizers = {
   'dom': HtmlTokenizer.dom,
 };
 
-/// A sanitizer with id / class predicates, an extra element and a `rel`
-/// rewriter, exercising the configuration surface.
-final configured = htmlSanitizer(
-  rules: RuleSet.gfm(
-    allowElementId: (id) => id == 'only-allowed-id',
-    allowClassName: (className) => className == 'only-allowed-class',
-  ).union(RuleSet({'only-allowed-tag': const TagRule()})),
-  rewriters: [
-    addLinkRel((href) => href == 'bad-link' ? ['ugc', 'nofollow'] : const []),
-  ],
-);
+/// A sanitizer with id / class allowed and limited by a rewriter, an extra
+/// element and a `rel` rewriter, exercising the configuration surface.
+String configured(String html) => sanitizeHtml(
+      html,
+      rules: RuleSet.gfm(allowElementId: true, allowClassName: true)
+          .union(RuleSet({'only-allowed-tag': const ElementRule()})),
+      rewriters: [
+        HtmlRewriter(_LimitIdAndClass.new),
+        HtmlRewriter.addLinkRel(
+            (href) => href == 'bad-link' ? ['ugc', 'nofollow'] : const []),
+      ],
+    );
+
+/// Keeps only `id="only-allowed-id"` and the class `only-allowed-class`.
+final class _LimitIdAndClass extends HtmlTokenSink {
+  final HtmlTokenSink _next;
+  _LimitIdAndClass(this._next);
+
+  @override
+  void text(String source, int start, int end) =>
+      _next.text(source, start, end);
+
+  @override
+  void startTag(String name, Map<String, String> attributes) {
+    if (attributes.isNotEmpty) {
+      if (attributes['id'] != 'only-allowed-id') {
+        attributes.remove('id');
+      }
+      final classes = attributes['class']
+          ?.split(' ')
+          .where((c) => c == 'only-allowed-class')
+          .join(' ');
+      if (classes == null || classes.isEmpty) {
+        attributes.remove('class');
+      } else {
+        attributes['class'] = classes;
+      }
+    }
+    _next.startTag(name, attributes);
+  }
+
+  @override
+  void endTag(String name) => _next.endTag(name);
+}
 
 void main() {
   void testContains(String template, String needle,
@@ -318,7 +350,8 @@ void main() {
           '<table><tr><td>a<div>b</div></td><td>c</td></tr></table>');
       expect(sanitizeHtml('<h1>a<h2>b'), '<h1>a</h1><h2>b</h2>');
       // A <button> is a scope boundary: the <div> does not close the <p>.
-      final withButton = RuleSet.gfm().union(RuleSet({'button': TagRule()}));
+      final withButton =
+          RuleSet.gfm().union(RuleSet({'button': ElementRule()}));
       expect(
         sanitizeHtml('<p><button>x<div>y', rules: withButton),
         '<p><button>x<div>y</div></button></p>',
@@ -345,7 +378,8 @@ void main() {
       final sanitized = configured(
           '<a href="bad-link" rel=\'ugc" onmouseover="alert(1)\'>test</a>');
       expect(sanitized, isNot(contains('onmouseover=')));
-      expect(sanitized, contains('rel="ugc nofollow"'));
+      // The whole `rel` is dropped: `rel` tokens are all-or-nothing.
+      expect(sanitized, '<a href="bad-link">test</a>');
     });
     test('< and > in attribute values are escaped', () {
       expect(
@@ -382,10 +416,12 @@ void main() {
         withConfiguration: false);
     testNotContains('<span class="any-class">hello</span>', 'class=',
         withConfiguration: false);
-    testContains(
-        '<a rel="nofollow me x-y_1 bad!">x</a>', 'rel="nofollow me x-y_1"',
+    testContains('<a rel="nofollow me">x</a>', 'rel="nofollow me"',
         withConfiguration: false);
-    testNotContains('<a rel="bad!">x</a>', 'rel', withConfiguration: false);
+    testNotContains('<a rel="nofollow x-y_1">x</a>', 'rel',
+        withConfiguration: false);
+    testNotContains('<a rel="noopener opener">x</a>', 'rel',
+        withConfiguration: false);
   });
 
   group('DOMPurify adversarial test cases:', () {
@@ -509,7 +545,8 @@ void main() {
         '<a title="&quot;&amp;&lt;">x</a>',
       ];
       for (final MapEntry(key: name, value: tokenizer) in tokenizers.entries) {
-        final sanitize = htmlSanitizer(tokenizer: tokenizer);
+        String sanitize(String html) =>
+            sanitizeHtml(html, tokenizer: tokenizer);
         for (final c in cases) {
           final once = sanitize(c);
           expect(sanitize(once), once, reason: 'Not idempotent: "$c" ($name)');
@@ -558,7 +595,8 @@ void main() {
   group('Text character references:', () {
     test('references are preserved, lone ampersands escaped', () {
       for (final MapEntry(key: name, value: tokenizer) in tokenizers.entries) {
-        final sanitize = htmlSanitizer(tokenizer: tokenizer);
+        String sanitize(String html) =>
+            sanitizeHtml(html, tokenizer: tokenizer);
         // The DOM tokenizer decodes references; the result renders the same.
         final copy =
             name == 'dom' ? '\u00A9 \u00A9 \u00A9' : '&copy; &#169; &#xA9;';
@@ -625,10 +663,45 @@ void main() {
     test('Max depth nesting bounds tags without leaving unclosed output', () {
       final output = sanitizeHtml(
           '${'<div>' * 140}<div><p>deep</p></div>${'</div>' * 140}');
-      final openDivs = '<div>'.allMatches(output).length;
-      expect(openDivs, '</div>'.allMatches(output).length);
-      expect(openDivs, lessThanOrEqualTo(128));
-      expect(output, contains('deep'));
+      // Every element is written, balanced, at most 128 deep: like Blink,
+      // a start tag at the cap becomes a sibling of the innermost element.
+      expect('<div>'.allMatches(output).length, 141);
+      expect('</div>'.allMatches(output).length, 141);
+      var depth = 0, maxDepth = 0;
+      for (final tag in RegExp('</?(div|p)>').allMatches(output)) {
+        depth += tag[0]!.startsWith('</') ? -1 : 1;
+        maxDepth = depth > maxDepth ? depth : maxDepth;
+      }
+      expect(depth, 0);
+      expect(maxDepth, 128);
+      expect(output, contains('<p>deep</p></div>'));
+    });
+
+    test('Void elements and end tags at max depth stay consistent', () {
+      // `<b>` at the cap becomes a sibling of `<p>`; the later `</p>` finds
+      // no open `p` and is not written, so the browser never has to answer a
+      // stray `</p>` with an extra `<p>`.
+      final output = sanitizeHtml('${'<div>' * 127}<p>x<b>y<hr>z</p>w');
+      expect(output, contains('<p>x</p><b>y<hr>zw</b></div>'));
+    });
+
+    test('Implied end tags stay linear for deep open stacks', () {
+      final stopwatch = Stopwatch()..start();
+      sanitizeHtml('${'<b>' * 40000}${'<div>' * 40000}');
+      sanitizeHtml('${'<b>' * 40000}${'</i>' * 40000}');
+      sanitizeHtml('${'<x>' * 40000}${'</y>' * 40000}');
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
+    });
+
+    test('xmp and plaintext close an open paragraph', () {
+      final rules = RuleSet.gfm().union(RuleSet({
+        'xmp': const ElementRule(),
+        'plaintext': const ElementRule(),
+      }));
+      expect(sanitizeHtml('<p>a<xmp>b</xmp>c</p>', rules: rules),
+          '<p>a</p><xmp></xmp>c');
+      expect(sanitizeHtml('<p>a<plaintext>b', rules: rules),
+          '<p>a</p><plaintext></plaintext>');
     });
 
     test('Multi-dash comments <!-- ---> do not swallow subsequent markup', () {
@@ -645,7 +718,8 @@ void main() {
     });
 
     test('Simple tokenizer handles non-tag < correctly', () {
-      final sanitize = htmlSanitizer(tokenizer: HtmlTokenizer.simple);
+      String sanitize(String html) =>
+          sanitizeHtml(html, tokenizer: HtmlTokenizer.simple);
       expect(sanitize('a < b'), 'a &lt; b');
       expect(sanitize('<3'), '&lt;3');
       expect(sanitize('</>'), '');
@@ -667,7 +741,7 @@ void main() {
     });
 
     test('Attribute name breakout on custom elements is strictly blocked', () {
-      final rules = RuleSet({'my-tag': const TagRule()});
+      final rules = RuleSet({'my-tag': const ElementRule()});
       expect(
         sanitizeHtml('<my-tag foo"onload="alert(1)"=bar>content</my-tag>',
             rules: rules),
@@ -679,16 +753,16 @@ void main() {
   group('RuleSet:', () {
     test('rejects names the writer cannot write', () {
       for (final name in ['', 'DIV', 'a b', 'a>', 'image']) {
-        expect(() => RuleSet({name: const TagRule()}), throwsArgumentError,
+        expect(() => RuleSet({name: const ElementRule()}), throwsArgumentError,
             reason: name);
-        expect(
-            () => RuleSet.unsafe({name: const TagRule()}), throwsArgumentError,
+        expect(() => RuleSet.unsafe({name: const ElementRule()}),
+            throwsArgumentError,
             reason: name);
       }
       for (final name in ['Title', 'a"b', 'on click', '1x']) {
         expect(
             () => RuleSet({
-                  'span': TagRule(attributes: {name: AttributeRule.any})
+                  'span': ElementRule(attributes: {name: AttributeRule.any()})
                 }),
             throwsArgumentError,
             reason: name);
@@ -701,13 +775,15 @@ void main() {
         'frameset', 'frame', 'form', 'object', 'embed', 'applet', 'isindex',
         'noscript', 'noembed', 'noframes', 'svg', 'math',
       ]) {
-        expect(() => RuleSet({tag: const TagRule()}), throwsUnsupportedError,
+        expect(
+            () => RuleSet({tag: const ElementRule()}), throwsUnsupportedError,
             reason: tag);
-        RuleSet.unsafe({tag: const TagRule()}); // Does not throw.
+        RuleSet.unsafe({tag: const ElementRule()}); // Does not throw.
       }
       // Rendering-only oddities are allowed.
       RuleSet({
-        for (final t in ['plaintext', 'xmp', 'iframe', 'template']) t: TagRule()
+        for (final t in ['plaintext', 'xmp', 'iframe', 'template'])
+          t: ElementRule()
       });
     });
 
@@ -716,7 +792,7 @@ void main() {
         'onclick', 'onerror', 'style', 'srcdoc', 'is', 'form', 'formaction', //
         'formtarget', 'ping', 'attributionsrc',
       ]) {
-        final rule = TagRule(attributes: {attribute: AttributeRule.any});
+        final rule = ElementRule(attributes: {attribute: AttributeRule.any()});
         expect(() => RuleSet({'div': rule}), throwsUnsupportedError,
             reason: attribute);
         RuleSet.unsafe({'div': rule});
@@ -729,57 +805,78 @@ void main() {
         'background', 'longdesc',
       ]) {
         for (final rule in [
-          AttributeRule.any,
+          AttributeRule.any(),
           AttributeRule.where((_) => true),
-          AttributeRule.tokens((_) => true),
-          AttributeRule.srcset,
+          AttributeRule.srcset(),
         ]) {
           expect(
               () => RuleSet({
-                    'x': TagRule(attributes: {attribute: rule})
+                    'x': ElementRule(attributes: {attribute: rule})
                   }),
               throwsUnsupportedError,
               reason: attribute);
         }
         RuleSet({
-          'x': TagRule(attributes: {attribute: AttributeRule.url})
+          'x': ElementRule(attributes: {attribute: AttributeRule.url()})
         });
         RuleSet({
-          'x': TagRule(
-              attributes: {attribute: AttributeRule.urlWhere((_) => true)})
+          'x': ElementRule(
+              attributes: {attribute: AttributeRule.url((_) => true)})
         });
       }
       expect(
           () => RuleSet({
-                'img': TagRule(attributes: {'srcset': AttributeRule.url})
+                'img': ElementRule(attributes: {'srcset': AttributeRule.url()})
               }),
           throwsUnsupportedError);
       RuleSet({
-        'img': TagRule(attributes: {'srcset': AttributeRule.srcset})
+        'img': ElementRule(attributes: {'srcset': AttributeRule.srcset()})
       });
+    });
+
+    test('grant assertions survive union and intersection', () {
+      final checked = RuleSet({
+        'a': ElementRule(attributes: {'href': AttributeRule.url()})
+      });
+      final unsafe = RuleSet.unsafe({
+        'a': ElementRule(attributes: {'href': AttributeRule.any()})
+      });
+      // Intersection with anything keeps the URL policy; union with an
+      // unsafe set is unsafe.
+      expect(
+          sanitizeHtml('<a href="javascript:alert(1)">x</a>',
+              rules: checked.intersection(unsafe)),
+          '<a>x</a>');
+      expect(
+          sanitizeHtml('<a href="javascript:alert(1)">x</a>',
+              rules: checked.union(unsafe)),
+          '<a href="javascript:alert(1)">x</a>');
     });
 
     test('unsafe rule sets really are unsafe, but still well-formed', () {
       final rules = RuleSet.unsafe({
-        'div': TagRule(attributes: {'onclick': AttributeRule.any}),
+        'div': ElementRule(attributes: {'onclick': AttributeRule.any()}),
       });
       expect(sanitizeHtml('<div onclick="x<y">a</div>', rules: rules),
           '<div onclick="x&lt;y">a</div>');
     });
 
-    test('TagRule allows no attributes by default', () {
-      final rules = RuleSet({'b': const TagRule()});
+    test('ElementRule allows no attributes by default', () {
+      final rules = RuleSet({'b': const ElementRule()});
       expect(sanitizeHtml('<b title="x" class="y">a</b>', rules: rules),
           '<b>a</b>');
     });
 
     test('attribute rules', () {
       final rules = RuleSet({
-        'a': TagRule(attributes: {
-          'href': AttributeRule.urlWhere((u) => u.host == 'example.com'),
+        'a': ElementRule(attributes: {
+          'href': AttributeRule.url((u) => u.host == 'example.com'),
           'title': AttributeRule.where((v) => v.length < 5),
-          'rel': AttributeRule.tokens((t) => t != 'bad'),
-          'data-x': AttributeRule.any,
+          'data-x': AttributeRule.any(),
+        }),
+        'img': ElementRule(attributes: {
+          'srcset': AttributeRule.srcset(
+              (urls) => urls.every((u) => u.host == 'example.com')),
         }),
       });
       String s(String html) => sanitizeHtml(html, rules: rules);
@@ -790,109 +887,137 @@ void main() {
       expect(s('<a href="javascript:alert(1)">a</a>'), '<a>a</a>');
       expect(s('<a title="1234">a</a>'), '<a title="1234">a</a>');
       expect(s('<a title="12345">a</a>'), '<a>a</a>');
-      expect(s('<a rel=" ok  bad ok2 ">a</a>'), '<a rel="ok ok2">a</a>');
-      expect(s('<a rel=" ok  ok2 ">a</a>'), '<a rel=" ok  ok2 ">a</a>');
-      expect(s('<a rel="bad">a</a>'), '<a>a</a>');
-      expect(s('<a rel="">a</a>'), '<a>a</a>');
       expect(s('<a data-x="&lt;">a</a>'), '<a data-x="&lt;">a</a>');
+      expect(s('<img srcset="https://example.com/a 1x, //example.com/b 2x">'),
+          '<img srcset="https://example.com/a 1x, //example.com/b 2x">');
+      expect(s('<img srcset="https://example.com/a 1x, //evil.com/b 2x">'),
+          '<img>');
+    });
+
+    test('url(where) sees the host the browser will use', () {
+      final rules = RuleSet({
+        'a': ElementRule(attributes: {
+          'href': AttributeRule.url((u) => u.host != 'evil.com'),
+        }),
+      });
+      String s(String html) => sanitizeHtml(html, rules: rules);
+      // Forms where RFC 3986 and the WHATWG URL parser find different hosts
+      // are refused rather than passed to `where` with a misleading `Uri`.
+      for (final href in [
+        'https:evil.com/x',
+        'https:/evil.com/x',
+        'https:///evil.com/x',
+        'https://e%76il.com/',
+        'https://good.com@evil.com/',
+        r'https:\\evil.com/',
+        'https://',
+        'https:',
+      ]) {
+        expect(s('<a href="$href">a</a>'), '<a>a</a>', reason: href);
+      }
+      expect(s('<a href="https://good.com/x">a</a>'),
+          '<a href="https://good.com/x">a</a>');
+      expect(s('<a href="mailto:x@evil.com">a</a>'),
+          '<a href="mailto:x@evil.com">a</a>');
+      // Only ASCII whitespace is stripped; U+00A0 makes it a relative URL
+      // for the browser and an unknown scheme for the policy.
+      expect(s('<a href="\u00A0https://good.com/">a</a>'), '<a>a</a>');
+      expect(s('<a href="  https://good.com/ ">a</a>'),
+          '<a href="  https://good.com/ ">a</a>');
     });
 
     test('union keeps elements and attributes allowed by either', () {
       final a = RuleSet({
-        'b': TagRule(attributes: {
+        'b': ElementRule(attributes: {
           'title': AttributeRule.where((v) => v == 'a'),
-          'class': AttributeRule.tokens((t) => t == 'a'),
         }),
-        'i': const TagRule(),
+        'i': const ElementRule(),
       });
       final b = RuleSet({
-        'b': TagRule(attributes: {
+        'b': ElementRule(attributes: {
           'title': AttributeRule.where((v) => v == 'b'),
-          'class': AttributeRule.tokens((t) => t == 'b'),
-          'lang': AttributeRule.any,
+          'lang': AttributeRule.any(),
         }),
-        'u': const TagRule(),
+        'u': const ElementRule(),
       });
       String s(String html) => sanitizeHtml(html, rules: a.union(b));
       expect(s('<i>x</i><u>y</u>'), '<i>x</i><u>y</u>');
       expect(s('<b title="a">x</b>'), '<b title="a">x</b>');
       expect(s('<b title="b">x</b>'), '<b title="b">x</b>');
       expect(s('<b title="c" lang="en">x</b>'), '<b lang="en">x</b>');
-      expect(s('<b class="a b c">x</b>'), '<b class="a b">x</b>');
     });
 
     test('intersection keeps only what both allow', () {
       final a = RuleSet({
-        'b': TagRule(attributes: {
+        'b': ElementRule(attributes: {
           'title': AttributeRule.where((v) => v.startsWith('a')),
-          'class': AttributeRule.tokens((t) => t != 'x'),
-          'lang': AttributeRule.any,
+          'lang': AttributeRule.any(),
         }),
-        'i': const TagRule(),
+        'i': const ElementRule(),
       });
       final b = RuleSet({
-        'b': TagRule(attributes: {
+        'b': ElementRule(attributes: {
           'title': AttributeRule.where((v) => v.endsWith('b')),
-          'class': AttributeRule.tokens((t) => t != 'y'),
         }),
-        'u': const TagRule(),
+        'u': const ElementRule(),
       });
       String s(String html) => sanitizeHtml(html, rules: a.intersection(b));
       expect(s('<i>x</i><u>y</u><b>z</b>'), '<b>z</b>');
       expect(s('<b title="ab" lang="en">x</b>'), '<b title="ab">x</b>');
       expect(s('<b title="a">x</b>'), '<b>x</b>');
-      expect(s('<b class="x y z">x</b>'), '<b class="z">x</b>');
     });
 
-    test('gfm with predicates passes the grant assertions', () {
-      RuleSet.gfm(allowElementId: (_) => true, allowClassName: (_) => true);
+    test('gfm with id and class passes the grant assertions', () {
+      RuleSet.gfm(allowElementId: true, allowClassName: true);
     });
   });
 
   group('Rewriters:', () {
-    test('rewriteAttributes runs before the rules', () {
-      final sanitize = htmlSanitizer(rewriters: [
-        rewriteAttributes('h2', (attributes) {
-          attributes['id'] = 'heading';
-          attributes['onclick'] = 'alert(1)';
-        }),
-      ]);
+    test('HtmlRewriter.attributes runs before the rules', () {
+      String sanitize(String html) => sanitizeHtml(html, rewriters: [
+            HtmlRewriter.attributes('h2', (attributes) {
+              attributes['id'] = 'heading';
+              attributes['onclick'] = 'alert(1)';
+            }),
+          ]);
       // Default rules allow no `id`, so the rewrite is filtered out.
       expect(sanitize('<h2>x</h2>'), '<h2>x</h2>');
-      final withIds = htmlSanitizer(
-        rules: RuleSet.gfm(allowElementId: (id) => id == 'heading'),
-        rewriters: [
-          rewriteAttributes('h2', (attributes) => attributes['id'] = 'heading'),
-        ],
-      );
-      expect(withIds('<h2 id="x">x</h2><h3 id="heading">y</h3>'),
-          '<h2 id="heading">x</h2><h3 id="heading">y</h3>');
+      String withIds(String html) => sanitizeHtml(
+            html,
+            rules: RuleSet.gfm(allowElementId: true),
+            rewriters: [
+              HtmlRewriter.attributes(
+                  'h2', (attributes) => attributes['id'] = 'heading'),
+            ],
+          );
+      expect(withIds('<h2 id="x">x</h2><h3 id="y">y</h3>'),
+          '<h2 id="heading">x</h2><h3 id="y">y</h3>');
     });
 
-    test('addLinkRel merges with existing tokens', () {
-      final sanitize = htmlSanitizer(
-        rewriters: [
-          addLinkRel((href) => ['ugc', 'nofollow'])
-        ],
-      );
+    test('HtmlRewriter.addLinkRel merges with existing tokens', () {
+      String sanitize(String html) => sanitizeHtml(
+            html,
+            rewriters: [
+              HtmlRewriter.addLinkRel((href) => ['ugc', 'nofollow'])
+            ],
+          );
       expect(sanitize('<a href="/x" rel="nofollow me">x</a>'),
           '<a href="/x" rel="nofollow me ugc">x</a>');
       expect(sanitize('<a>x</a>'), '<a>x</a>');
     });
   });
 
-  group('SaneHtmlWriter:', () {
+  group('HtmlWriter:', () {
     test('throws on names it cannot write', () {
-      expect(() => SaneHtmlWriter().startTag('DIV', const {}),
-          throwsArgumentError);
-      expect(() => SaneHtmlWriter().startTag('image', const {}),
-          throwsArgumentError);
-      expect(() => SaneHtmlWriter().startTag('div', {'on click': ''}),
+      expect(() => HtmlWriter().startTag('DIV', const {}), throwsArgumentError);
+      expect(
+          () => HtmlWriter().startTag('image', const {}), throwsArgumentError);
+      expect(() => HtmlWriter().startTag('div', {'on click': ''}),
           throwsArgumentError);
     });
 
     test('balances and escapes', () {
-      final writer = SaneHtmlWriter()
+      final writer = HtmlWriter()
         ..startTag('p', {'title': 'a"b<c>&'})
         ..text('x <y> & &amp; &#1; &;', 0, 21)
         ..startTag('br', const {})
@@ -907,7 +1032,7 @@ void main() {
 
   group('All tokenizers:', () {
     for (final MapEntry(key: name, value: tokenizer) in tokenizers.entries) {
-      final sanitize = htmlSanitizer(tokenizer: tokenizer);
+      String sanitize(String html) => sanitizeHtml(html, tokenizer: tokenizer);
 
       test('$name: basic sanitization', () {
         expect(

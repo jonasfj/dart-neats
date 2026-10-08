@@ -16,13 +16,15 @@
 ///
 /// Used by the streaming tokenizers to produce decoded attribute values, as
 /// the `HtmlTokenSink` contract requires. Fidelity to browsers matters for
-/// _display_ only: `SaneHtmlWriter` re-escapes every attribute value exactly,
+/// _display_ only: `HtmlWriter` re-escapes every attribute value exactly,
 /// so the URL policy validates precisely the string a browser will see. A
 /// decoding bug can therefore produce a wrong-looking attribute, never a
 /// dangerous one.
 ///
-/// Implements the attribute-value branch of
-/// https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state
+/// Implements the attribute-value branch of the
+/// [character reference state][1].
+///
+/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#character-reference-state
 library;
 
 import 'named_character_references.dart';
@@ -139,7 +141,9 @@ int _indexOfAmpersand(String s, int start, int end) {
   return (text: _numericReferenceText(value), end: i);
 }
 
-/// https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state
+/// The [numeric character reference end state][1].
+///
+/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state
 String _numericReferenceText(int value) {
   if (value == 0 || value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) {
     return '\uFFFD';

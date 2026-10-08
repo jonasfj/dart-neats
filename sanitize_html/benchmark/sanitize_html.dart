@@ -17,27 +17,26 @@ import 'dart:io' show File, Platform;
 import 'package:bench_press/bench_press.dart';
 import 'package:markdown/markdown.dart' show markdownToHtml;
 import 'package:sanitize_html/sanitize_html.dart';
-import 'package:sanitize_html/tokens.dart' show HtmlTokenizer;
 
 Future<void> main(List<String> args) async {
   final testFile = Platform.script.resolve('testdata/lorem-ipsum.md');
   final testData = await File(testFile.toFilePath()).readAsString();
   final html = markdownToHtml(testData);
 
-  final rules = RuleSet.gfm(
-    allowClassName: (_) => true,
-    allowElementId: (_) => true,
-  );
-  final streaming =
-      htmlSanitizer(rules: rules, tokenizer: HtmlTokenizer.streaming);
-  final simple = htmlSanitizer(rules: rules, tokenizer: HtmlTokenizer.simple);
-  final dom = htmlSanitizer(rules: rules, tokenizer: HtmlTokenizer.dom);
-  final withRel = htmlSanitizer(
-    rules: rules,
-    rewriters: [
-      addLinkRel((_) => const ['ugc', 'nofollow'])
-    ],
-  );
+  final rules = RuleSet.gfm(allowClassName: true, allowElementId: true);
+  String streaming(String html) =>
+      sanitizeHtml(html, rules: rules, tokenizer: HtmlTokenizer.streaming);
+  String simple(String html) =>
+      sanitizeHtml(html, rules: rules, tokenizer: HtmlTokenizer.simple);
+  String dom(String html) =>
+      sanitizeHtml(html, rules: rules, tokenizer: HtmlTokenizer.dom);
+  String withRel(String html) => sanitizeHtml(
+        html,
+        rules: rules,
+        rewriters: [
+          HtmlRewriter.addLinkRel((_) => const ['ugc', 'nofollow'])
+        ],
+      );
 
   final group = BenchmarkGroup.compare(
     name: 'HtmlSanitizer',

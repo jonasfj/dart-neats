@@ -2152,8 +2152,10 @@ const namedCharacterReferences = <String, String>{
 /// a terminating `;` (e.g. `&amp` -> `&`), keyed by name without the
 /// leading `&`.
 ///
-/// See the "historical reasons" clause in
-/// https://html.spec.whatwg.org/multipage/parsing.html#named-character-reference-state
+/// See the "historical reasons" clause in the
+/// [named character reference state][1].
+///
+/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#named-character-reference-state
 const legacyNamedCharacterReferences = <String, String>{
   'AElig': '\u00C6',
   'AMP': '&',

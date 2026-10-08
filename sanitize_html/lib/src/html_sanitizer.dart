@@ -12,30 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// Assembles tokenizer, transformers and writer into a sanitizer function.
+/// Assembles tokenizer, rewriters and writer into [sanitizeHtml].
 library;
 
+import 'html_rewriter.dart';
 import 'html_token_sink.dart';
 import 'html_tokenizer.dart';
-import 'implied_end_tags.dart';
+import 'html_writer.dart';
 import 'rule_set.dart';
-import 'sane_html_writer.dart';
-import 'sanitizer.dart';
 
-/// Creates a function that sanitizes HTML with [rules].
+/// Sanitizes [html] with [rules].
 ///
-/// The returned function takes untrusted HTML and returns HTML containing
-/// only the elements and attributes [rules] allow (by default [RuleSet.gfm],
-/// modelled on how GitHub sanitizes rendered Markdown), with text and
-/// attribute values escaped. Elements that are not allowed are removed
-/// together with their content.
+/// Returns HTML containing only the elements and attributes [rules] allow
+/// (by default [RuleSet.gfm], modelled on how GitHub sanitizes rendered
+/// Markdown), with text and attribute values escaped. Elements that are not
+/// allowed are removed together with their content.
 ///
 /// ```dart
-/// final sanitize = htmlSanitizer(
-///   rules: RuleSet.gfm(allowClassName: (c) => c.startsWith('hljs-')),
-///   rewriters: [addLinkRel((href) => ['ugc', 'nofollow'])],
+/// print(sanitizeHtml('<a href="javascript:alert();">evil link</a>'));
+/// // Prints: <a>evil link</a>
+///
+/// final safe = sanitizeHtml(
+///   untrusted,
+///   rules: RuleSet.gfm(allowElementId: true),
+///   rewriters: [HtmlRewriter.addLinkRel((href) => ['ugc', 'nofollow'])],
 /// );
-/// final safe = sanitize(untrusted);
 /// ```
 ///
 /// [rewriters] run before the rules are applied, so they cannot introduce
@@ -53,37 +54,18 @@ import 'sanitizer.dart';
 /// interfere with the host page (no `id` or `class` unless allowed, no CSS,
 /// no forms, no `name` except on `<a>`). It does not protect against content
 /// that is merely misleading, such as links to malicious sites.
-String Function(String html) htmlSanitizer({
+String sanitizeHtml(
+  String html, {
   RuleSet? rules,
-  List<HtmlTransformer> rewriters = const [],
+  List<HtmlRewriter> rewriters = const [],
   HtmlTokenizer tokenizer = HtmlTokenizer.streaming,
 }) {
-  final transformers = [
-    impliedEndTags(),
-    ...rewriters,
-    sanitizer(rules ?? RuleSet.gfm()),
-  ].reversed.toList();
-  return (html) {
-    final writer = SaneHtmlWriter();
-    HtmlTokenSink sink = writer;
-    for (final transformer in transformers) {
-      sink = transformer(sink);
-    }
-    tokenizer.tokenize(html, sink);
-    return writer.finish();
-  };
+  final writer = HtmlWriter();
+  HtmlTokenSink sink =
+      HtmlRewriter.sanitizer(rules ?? RuleSet.gfm()).bind(writer);
+  for (final rewriter in rewriters.reversed) {
+    sink = rewriter.bind(sink);
+  }
+  tokenizer.tokenize(html, HtmlRewriter.impliedEndTags().bind(sink));
+  return writer.finish();
 }
-
-/// Sanitizes [html] with [rules]; see [htmlSanitizer].
-///
-/// ```dart
-/// print(sanitizeHtml('<a href="javascript:alert();">evil link</a>'));
-/// // Prints: <a>evil link</a>
-/// ```
-///
-/// For repeated use, or to add rewriters, build a sanitizer once with
-/// [htmlSanitizer].
-String sanitizeHtml(String html, {RuleSet? rules}) =>
-    (rules == null ? _defaultSanitizer : htmlSanitizer(rules: rules))(html);
-
-final _defaultSanitizer = htmlSanitizer();

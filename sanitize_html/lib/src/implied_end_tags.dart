@@ -12,32 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// # UNTRUSTED: a transformer applying the tree builder's implied end tags.
+/// # UNTRUSTED: a rewriter applying the tree builder's implied end tags.
 ///
 /// `<p>` is closed by block elements, `<li>` by `<li>`, cells and rows by the
 /// next cell or row, headings by headings, `<option>` by `<option>`, and a
 /// nested `<a>` closes the open one. This makes output for common sloppy HTML
-/// tidy and sanitizing idempotent. It is cosmetic: `SaneHtmlWriter` balances
+/// tidy and sanitizing idempotent. It is cosmetic: `HtmlWriter` balances
 /// whatever is left open, and the browser would have applied the same rules
 /// to the output anyway.
 ///
 /// It tracks every start tag it sees, including ones the sanitizer will drop,
-/// because that is what the browser's tree builder does.
+/// because that is what the browser's tree builder does. Like Blink, it caps
+/// the stack at [_maxDepth]: a deeper start tag replaces the innermost open
+/// element, which keeps every scan of the stack bounded and so the rewriter
+/// linear.
 library;
 
+import 'html_rewriter.dart';
 import 'html_token_sink.dart';
-import 'sane_html_writer.dart' show isVoidElement;
+import 'html_writer.dart' show isVoidElement;
 
-/// A transformer that closes open elements a start tag implicitly ends.
+/// See `HtmlRewriter.impliedEndTags`.
+HtmlRewriter impliedEndTags() => const HtmlRewriter(_ImpliedEndTags.new);
+
+/// Blink's `kMaximumHTMLParserDOMTreeDepth`: deeper elements are attached as
+/// siblings, so modelling deeper nesting would not match a browser anyway.
+const _maxDepth = 512;
+
+/// Start tags that close an open `<p>` in button scope; the
+/// ["in body" insertion mode][1] does this before inserting any of these
+/// elements.
 ///
-/// Place it before the sanitizer (it needs to see the same tags the browser
-/// would). Unnecessary after `HtmlTokenizer.dom`, which already builds a
-/// tree.
-HtmlTransformer impliedEndTags() => _ImpliedEndTags.new;
-
-/// Start tags that close an open `<p>` in button scope; the "in body"
-/// insertion mode does this before inserting any of these elements.
-/// https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody
+/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody
 const _closesParagraph = <String>{
   'address',
   'article',
@@ -55,6 +61,7 @@ const _closesParagraph = <String>{
   'figcaption',
   'figure',
   'footer',
+  'form',
   'h1',
   'h2',
   'h3',
@@ -71,12 +78,14 @@ const _closesParagraph = <String>{
   'nav',
   'ol',
   'p',
+  'plaintext',
   'pre',
   'search',
   'section',
   'summary',
   'table',
   'ul',
+  'xmp',
 };
 
 /// Start tags that close other open elements: each element in `targets`
@@ -107,8 +116,9 @@ const _closesOpen = <String, ({Set<String> targets, Set<String> scope})>{
 const _headings = <String>{'h1', 'h2', 'h3', 'h4', 'h5', 'h6'};
 const _rowGroups = <String>{'tbody', 'tfoot', 'thead'};
 
-/// Boundaries of the tree builder's element scopes.
-/// https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-scope
+/// Boundaries of the tree builder's [element scopes][1].
+///
+/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-scope
 const _scope = <String>{
   'applet',
   'caption',
@@ -133,9 +143,11 @@ const _buttonScope = <String>{..._scope, 'button'};
 const _listItemScope = <String>{..._scope, 'ol', 'ul'};
 const _tableScope = <String>{'html', 'table', 'template'};
 
-/// Elements that push a marker onto the list of active formatting elements,
-/// beyond which an `<a>` start tag does not close an open `<a>`.
-/// https://html.spec.whatwg.org/multipage/parsing.html#list-of-active-formatting-elements
+/// Elements that push a marker onto the
+/// [list of active formatting elements][1], beyond which an `<a>` start tag
+/// does not close an open `<a>`.
+///
+/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#list-of-active-formatting-elements
 const _formattingMarkers = <String>{
   'applet',
   'caption',
@@ -171,9 +183,13 @@ final class _ImpliedEndTags extends HtmlTokenSink {
       }
     }
     _next.startTag(name, attributes);
-    if (!isVoidElement(name)) {
-      _open.add(name);
+    if (isVoidElement(name)) {
+      return;
     }
+    if (_open.length >= _maxDepth) {
+      _open.removeLast();
+    }
+    _open.add(name);
   }
 
   @override
@@ -192,9 +208,10 @@ final class _ImpliedEndTags extends HtmlTokenSink {
     _next.endTag(name);
   }
 
-  /// The tree builder's "has an element in scope": whether [name] is open
-  /// and none of [boundaries] was opened after it.
-  /// https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-the-specific-scope
+  /// The tree builder's ["has an element in scope"][1]: whether [name] is
+  /// open and none of [boundaries] was opened after it.
+  ///
+  /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#has-an-element-in-the-specific-scope
   bool _isOpenInScope(String name, Set<String> boundaries) {
     for (var i = _open.length - 1; i >= 0; i--) {
       final open = _open[i];

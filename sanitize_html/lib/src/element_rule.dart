@@ -22,49 +22,37 @@ import 'attribute_rule.dart';
 /// Attributes not in [attributes] are dropped.
 ///
 /// ```dart
-/// const TagRule(attributes: {
-///   'href': AttributeRule.url,
-///   'title': AttributeRule.any,
+/// const ElementRule(attributes: {
+///   'href': AttributeRule.url(),
+///   'title': AttributeRule.any(),
 /// })
 /// ```
-final class TagRule {
+final class ElementRule {
   final Map<String, AttributeRule> _attributes;
 
-  const TagRule({Map<String, AttributeRule> attributes = const {}})
+  const ElementRule({Map<String, AttributeRule> attributes = const {}})
       : _attributes = attributes;
 }
 
-/// Package-private operations on [TagRule]; not exported.
-extension TagRuleExtension on TagRule {
+/// Package-private operations on [ElementRule]; not exported.
+extension ElementRuleExtension on ElementRule {
   /// The attribute rules.
   Map<String, AttributeRule> get attributes => _attributes;
 
-  /// Filters [attributes] in place according to this rule and returns it.
+  /// Removes the attributes this rule does not keep from [attributes] and
+  /// returns it.
   Map<String, String> apply(Map<String, String> attributes) {
     if (attributes.isEmpty) {
       return attributes;
     }
-    Map<String, String>? changed;
-    attributes.removeWhere((name, value) {
-      final rule = _attributes[name];
-      if (rule == null) {
-        return true;
-      }
-      final kept = rule.apply(value);
-      if (kept == null) {
-        return true;
-      }
-      if (!identical(kept, value)) {
-        (changed ??= {})[name] = kept;
-      }
-      return false;
-    });
-    changed?.forEach((name, value) => attributes[name] = value);
+    attributes.removeWhere(
+      (name, value) => !(_attributes[name]?.keeps(value) ?? false),
+    );
     return attributes;
   }
 
   /// A rule keeping attributes kept by this rule or [other].
-  TagRule union(TagRule other) => TagRule(attributes: {
+  ElementRule union(ElementRule other) => ElementRule(attributes: {
         ..._attributes,
         for (final MapEntry(key: name, value: rule)
             in other._attributes.entries)
@@ -75,7 +63,7 @@ extension TagRuleExtension on TagRule {
       });
 
   /// A rule keeping attributes kept by both this rule and [other].
-  TagRule intersection(TagRule other) => TagRule(attributes: {
+  ElementRule intersection(ElementRule other) => ElementRule(attributes: {
         for (final MapEntry(key: name, value: rule) in _attributes.entries)
           if (other._attributes[name] case final theirs?)
             name: rule.intersection(theirs),

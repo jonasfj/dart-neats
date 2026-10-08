@@ -1,29 +1,32 @@
 ## v3.0.0-wip
  * **Breaking:** rewritten to be _safe by construction_: output is produced
-   only by a small, audited writer (`SaneHtmlWriter`) that emits balanced
+   only by a small, audited writer (`HtmlWriter`) that emits balanced
    lower-case tags, always double-quoted and escaped attribute values, and
    escaped text. See the README for the guarantee and what is trusted.
  * **Breaking:** `sanitizeHtml` now only takes `html` and an optional `rules`.
    The `allowElements`, `allowElementId`, `allowClassName` and `addLinkRel`
-   parameters are gone; use `htmlSanitizer(rules: RuleSet.gfm(allowElementId:
-   ..., allowClassName: ...), rewriters: [addLinkRel(...)])` to build a
-   sanitizer function once and reuse it.
- * Added `RuleSet`, `TagRule` and `AttributeRule` (`any`, `url`, `srcset`,
-   `urlWhere`, `where`, `tokens`) for declaring which elements and attributes
-   are kept, with `RuleSet.gfm()`, `union` and `intersection`.
+   parameters are gone; use `sanitizeHtml(html, rules: RuleSet.gfm(
+   allowElementId: true), rewriters: [HtmlRewriter.addLinkRel(...)])`. `RuleSet.gfm`
+   allows or drops `id` and `class` wholesale; limit their values with a
+   rewriter.
+ * Added `RuleSet`, `ElementRule` and `AttributeRule` (`any`, `url([where])`,
+   `srcset([where])`, `where`) for declaring which elements and attributes are
+   kept, with `RuleSet.gfm()`, `union` and `intersection`. Attribute rules
+   only keep or drop values, never rewrite them.
  * `RuleSet(...)` throws `UnsupportedError` for grants that defeat the purpose
    of sanitizing (elements `script`, `style`, `base`, `meta`, `link`, `html`,
    `head`, `body`, `frameset`, `frame`, `form`, `object`, `embed`, `applet`,
    `isindex`, `noscript`, `noembed`, `noframes`, `svg`, `math`; attributes
-   `on*`, `style`, `srcdoc`, `is`, `form*`, `ping`, `attributionsrc`; URL
-   attributes not bound to `AttributeRule.url` / `urlWhere` / `srcset`) and
+   `on*`, `style`, `srcdoc`, `is`, `form*`, `ping`, `attributionsrc`,
+   `popovertarget*`, `command`, `commandfor`, `shadowrootmode`; URL
+   attributes not bound to `AttributeRule.url` / `srcset`) and
    `ArgumentError` for names the writer cannot write (`'DIV'`, `'a b'`,
    `'image'`). `RuleSet.unsafe(...)` waives the `UnsupportedError`s.
- * Added `rewriteAttributes` and `addLinkRel` transformers, which run before
-   the rules are applied.
- * Added `package:sanitize_html/tokens.dart` with the pipeline building blocks
-   (`HtmlTokenSink`, `HtmlTransformer`, `HtmlTokenizer`, `sanitizer`,
-   `impliedEndTags`, `SaneHtmlWriter`) and three interchangeable tokenizers
+ * Added `HtmlRewriter` with `attributes` and `addLinkRel` rewriters, which
+   run before the rules are applied, and a constructor for custom rewriters.
+ * Added the pipeline building blocks `HtmlTokenSink`, `HtmlTokenizer` and
+   `HtmlWriter` (with `HtmlRewriter.sanitizer` and
+   `HtmlRewriter.impliedEndTags`) and three interchangeable tokenizers
    (`streaming` (default), `simple`, `dom`); tokenizers are not security
    relevant. `package:html` is only used by `HtmlTokenizer.dom`.
  * **Breaking:** output is normalized rather than re-serialized: tag and
@@ -40,13 +43,15 @@
    decoded and re-escaped.
  * **Breaking:** `name` is only kept on `<a>`; `accesskey`, `usemap`, and form
    related attributes (`action`, `method`, `enctype`, `accept`,
-   `accept-charset`, `for`, `prompt`) are no longer kept. `rel` tokens must
-   match `[a-z0-9_-]+`.
+   `accept-charset`, `for`, `prompt`) are no longer kept. `rel` is dropped
+   unless every token is a link type the HTML specification defines for
+   `<a>` (or `ugc` / `sponsored`), and none is `opener`.
  * URL attributes (`href`, `src`, `cite`, `longdesc`, `srcset`, ...) must be
    relative or use `http:`, `https:` or `mailto:`; URLs containing control
-   characters, `\`, or userinfo (`https://user@host`) are rejected.
- * Elements nested more than 128 levels deep are omitted (their content is
-   kept).
+   characters, `\`, userinfo (`https://user@host`), a percent-encoded host,
+   or anything but exactly `//` after `http:`/`https:` are rejected.
+ * Nesting is capped at 128 levels: like Blink, a deeper start tag closes the
+   innermost open element and becomes its sibling.
  * Removed the dependency on `package:meta`.
  * Roughly 4x faster than `v2.1.0` on the included benchmark.
 

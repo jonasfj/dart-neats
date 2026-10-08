@@ -18,21 +18,39 @@
 /// ```dart
 /// import 'package:sanitize_html/sanitize_html.dart';
 ///
-/// final sanitize = htmlSanitizer(
-///   rules: RuleSet.gfm(allowClassName: (c) => c.startsWith('hljs-')),
-///   rewriters: [addLinkRel((href) => ['ugc', 'nofollow'])],
+/// final safe = sanitizeHtml(
+///   untrusted,
+///   rules: RuleSet.gfm(allowElementId: true),
+///   rewriters: [HtmlRewriter.addLinkRel((href) => ['ugc', 'nofollow'])],
 /// );
-/// final safe = sanitize(untrusted);
 /// ```
 ///
-/// See [htmlSanitizer], [RuleSet] and the package README for how safety is
-/// achieved and what the guarantee covers. The building blocks (tokenizers,
-/// token sink, transformers and writer) are in
-/// `package:sanitize_html/tokens.dart`.
+/// See [sanitizeHtml], [RuleSet] and the package README for how safety is
+/// achieved and what the guarantee covers.
+///
+/// Under the hood [sanitizeHtml] is a pipeline, whose parts are exported for
+/// custom pipelines:
+///
+/// ```
+/// untrusted String
+///   -> HtmlTokenizer
+///   -> HtmlTokenSink: HtmlRewriter.impliedEndTags()
+///                  -> rewriters
+///                  -> HtmlRewriter.sanitizer(rules)
+///   -> HtmlWriter
+///   -> trusted String
+/// ```
+///
+/// Everything between tokenizer and writer is an [HtmlRewriter]. The
+/// sanitizer must be the last rewriter: everything before it is filtered by
+/// the rules, everything after it is trusted.
 library;
 
 export 'src/attribute_rule.dart' show AttributeRule;
-export 'src/html_sanitizer.dart' show htmlSanitizer, sanitizeHtml;
-export 'src/rewriters.dart' show addLinkRel, rewriteAttributes;
+export 'src/html_sanitizer.dart' show sanitizeHtml;
+export 'src/html_rewriter.dart' show HtmlRewriter;
 export 'src/rule_set.dart' show RuleSet;
-export 'src/tag_rule.dart' show TagRule;
+export 'src/element_rule.dart' show ElementRule;
+export 'src/html_token_sink.dart' show HtmlTokenSink;
+export 'src/html_tokenizer.dart' show HtmlTokenizer;
+export 'src/html_writer.dart' show HtmlWriter;

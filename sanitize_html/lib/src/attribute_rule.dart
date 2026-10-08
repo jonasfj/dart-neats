@@ -14,62 +14,57 @@
 
 /// # TRUSTED: how the value of an allowed attribute is filtered.
 ///
-/// An [AttributeRule] decides whether an attribute value is kept or dropped.
-/// Rules never rewrite values ([AttributeRule.tokens] is the one exception:
-/// it drops individual tokens); rewriting belongs in a transformer that runs
-/// before the sanitizer, see `rewriters.dart`.
+/// An [AttributeRule] decides whether an attribute value is kept or dropped;
+/// it never rewrites a value. Rewriting belongs in an `HtmlRewriter` that runs
+/// before the sanitizer, see `rewriters.dart`. Because rules only keep or
+/// drop, combining them is set algebra: a union keeps what either rule
+/// keeps, an intersection what both keep, and a URL check can never be
+/// followed by something that changes the URL.
 library;
 
 import 'url_policy.dart';
 
 /// Decides whether the value of an allowed attribute is kept.
 ///
-/// Used as the values of `TagRule.attributes`:
+/// Used as the values of `ElementRule.attributes`:
 ///
 /// ```dart
-/// TagRule(attributes: {
-///   'href': AttributeRule.url,
-///   'title': AttributeRule.any,
-///   'class': AttributeRule.tokens((c) => c.startsWith('hljs-')),
+/// ElementRule(attributes: {
+///   'href': AttributeRule.url(),
+///   'title': AttributeRule.any(),
+///   'class': AttributeRule.where((c) => c == 'hljs'),
 /// })
 /// ```
 sealed class AttributeRule {
   const AttributeRule._();
 
   /// Keeps any value.
-  static const AttributeRule any = _Any();
+  const factory AttributeRule.any() = _Any;
 
-  /// Keeps `http:`, `https:`, `mailto:` and relative URLs.
+  /// Keeps `http:`, `https:`, `mailto:` and relative URLs; with [where],
+  /// only those for which it returns `true`.
   ///
   /// Required (in a checked `RuleSet`) for every URL-valued attribute such as
   /// `href`, `src` and `cite`; see `RuleSet` for the list.
-  static const AttributeRule url = _Url();
-
-  /// Keeps a well-formed `srcset` whose every candidate URL passes [url].
-  static const AttributeRule srcset = _Srcset();
-
-  /// Keeps values that pass [url] and for which [allow] returns `true`.
   ///
-  /// [allow] receives the result of [Uri.tryParse]; values it cannot parse
-  /// are dropped. Because [url] refuses URLs where RFC 3986 and the WHATWG
-  /// URL Standard disagree, `uri.scheme` and `uri.host` are what the browser
-  /// will use.
+  /// [where] receives the URL as the browser will parse it; values [Uri]
+  /// cannot parse are dropped. The policy refuses the forms where [Uri] and
+  /// browsers disagree about the host, so an allowlist on `uri.host` is
+  /// sound. The host is not normalized (no IDNA mapping, no IPv4
+  /// canonicalization), so a denylist is not.
   ///
   /// ```dart
-  /// AttributeRule.urlWhere((uri) => uri.host == 'example.com')
+  /// AttributeRule.url((uri) => uri.host == 'example.com')
   /// ```
-  const factory AttributeRule.urlWhere(bool Function(Uri url) allow) =
-      _UrlWhere;
+  const factory AttributeRule.url([bool Function(Uri url)? where]) = _Url;
+
+  /// Keeps a well-formed `srcset` whose every candidate URL passes [url];
+  /// with [where], only if it returns `true` for the list of candidates.
+  const factory AttributeRule.srcset([bool Function(List<Uri> urls)? where]) =
+      _Srcset;
 
   /// Keeps values for which [allow] returns `true`.
   const factory AttributeRule.where(bool Function(String value) allow) = _Where;
-
-  /// Keeps the ASCII-whitespace separated tokens for which [allow] returns
-  /// `true`; drops the attribute when none remain.
-  ///
-  /// For `class`, `rel` and similar token lists.
-  const factory AttributeRule.tokens(bool Function(String token) allow) =
-      _Tokens;
 }
 
 final class _Any extends AttributeRule {
@@ -77,26 +72,18 @@ final class _Any extends AttributeRule {
 }
 
 final class _Url extends AttributeRule {
-  const _Url() : super._();
+  final bool Function(Uri url)? where;
+  const _Url([this.where]) : super._();
 }
 
 final class _Srcset extends AttributeRule {
-  const _Srcset() : super._();
-}
-
-final class _UrlWhere extends AttributeRule {
-  final bool Function(Uri url) allow;
-  const _UrlWhere(this.allow) : super._();
+  final bool Function(List<Uri> urls)? where;
+  const _Srcset([this.where]) : super._();
 }
 
 final class _Where extends AttributeRule {
   final bool Function(String value) allow;
   const _Where(this.allow) : super._();
-}
-
-final class _Tokens extends AttributeRule {
-  final bool Function(String token) allow;
-  const _Tokens(this.allow) : super._();
 }
 
 /// Keeps what either rule keeps; see [AttributeRuleExtension.union].
@@ -113,31 +100,25 @@ final class _Intersection extends AttributeRule {
 
 /// Package-private operations on [AttributeRule]; not exported.
 extension AttributeRuleExtension on AttributeRule {
-  /// The value to emit for an attribute with [value], or `null` to drop the
-  /// attribute.
-  ///
-  /// Returns [value] itself whenever nothing is removed.
-  String? apply(String value) => switch (this) {
-        _Any() => value,
-        _Url() => isSafeUrl(value) ? value : null,
-        _Srcset() => isSafeSrcset(value) ? value : null,
-        _UrlWhere(:final allow) => _isAllowedUrl(value, allow) ? value : null,
-        _Where(:final allow) => allow(value) ? value : null,
-        _Tokens(:final allow) => _filterTokens(value, allow),
-        _Union(:final a, :final b) => switch ((a, b)) {
-            (_Tokens(allow: final x), _Tokens(allow: final y)) =>
-              _filterTokens(value, (t) => x(t) || y(t)),
-            _ => a.apply(value) ?? b.apply(value),
+  /// Whether an attribute with [value] is kept.
+  bool keeps(String value) => switch (this) {
+        _Any() => true,
+        _Url(:final where) => switch (cleanUrl(value)) {
+            null => false,
+            final url => where == null || _parsed(url, where),
           },
-        _Intersection(:final a, :final b) => switch (a.apply(value)) {
-            null => null,
-            final v => b.apply(v),
+        _Srcset(:final where) => switch (cleanSrcset(value)) {
+            null => false,
+            final urls => where == null || _allParsed(urls, where),
           },
+        _Where(:final allow) => allow(value),
+        _Union(:final a, :final b) => a.keeps(value) || b.keeps(value),
+        _Intersection(:final a, :final b) => a.keeps(value) && b.keeps(value),
       };
 
   /// Whether every value this rule keeps is a URL accepted by the URL policy.
   bool get isUrlRestricted => switch (this) {
-        _Url() || _UrlWhere() => true,
+        _Url() => true,
         _Union(:final a, :final b) => a.isUrlRestricted && b.isUrlRestricted,
         _Intersection(:final a, :final b) =>
           a.isUrlRestricted || b.isUrlRestricted,
@@ -156,59 +137,33 @@ extension AttributeRuleExtension on AttributeRule {
       };
 
   /// A rule keeping a value if this rule or [other] keeps it.
-  ///
-  /// Two [AttributeRule.tokens] rules combine per token; otherwise the value
-  /// is that of this rule if it keeps it, else that of [other].
-  AttributeRule union(AttributeRule other) =>
-      identical(this, other) ? this : _Union(this, other);
+  AttributeRule union(AttributeRule other) => switch ((this, other)) {
+        (_Any(), _) || (_, _Any()) => const AttributeRule.any(),
+        _ when identical(this, other) => this,
+        _ => _Union(this, other),
+      };
 
-  /// A rule keeping a value only if this rule keeps it and [other] keeps
-  /// what this rule kept.
-  AttributeRule intersection(AttributeRule other) =>
-      identical(this, other) ? this : _Intersection(this, other);
+  /// A rule keeping a value only if both this rule and [other] keep it.
+  AttributeRule intersection(AttributeRule other) => switch ((this, other)) {
+        (_Any(), final rule) || (final rule, _Any()) => rule,
+        _ when identical(this, other) => this,
+        _ => _Intersection(this, other),
+      };
 }
 
-/// Whether [value] passes the URL policy, parses, and [allow] accepts it.
-bool _isAllowedUrl(String value, bool Function(Uri) allow) {
-  if (!isSafeUrl(value)) {
-    return false;
-  }
-  final uri = Uri.tryParse(value);
-  return uri != null && allow(uri);
+bool _parsed(String url, bool Function(Uri) where) {
+  final uri = Uri.tryParse(url);
+  return uri != null && where(uri);
 }
 
-/// `value` with the tokens [allow] rejects removed, `value` itself if none
-/// is rejected, or `null` if no token remains.
-String? _filterTokens(String value, bool Function(String) allow) {
-  List<String>? kept;
-  var removed = false;
-  var start = 0;
-  final n = value.length;
-  while (start < n) {
-    while (start < n && _isAsciiWhitespace(value.codeUnitAt(start))) {
-      start++;
+bool _allParsed(List<String> urls, bool Function(List<Uri>) where) {
+  final uris = <Uri>[];
+  for (final url in urls) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      return false;
     }
-    var end = start;
-    while (end < n && !_isAsciiWhitespace(value.codeUnitAt(end))) {
-      end++;
-    }
-    if (end > start) {
-      final token = value.substring(start, end);
-      if (allow(token)) {
-        (kept ??= []).add(token);
-      } else {
-        removed = true;
-      }
-    }
-    start = end;
+    uris.add(uri);
   }
-  if (kept == null) {
-    return null;
-  }
-  // Leading, trailing or repeated whitespace is also normalized away when
-  // something was removed; otherwise the value is kept verbatim.
-  return removed ? kept.join(' ') : value;
+  return where(uris);
 }
-
-bool _isAsciiWhitespace(int c) =>
-    c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0C || c == 0x0D;

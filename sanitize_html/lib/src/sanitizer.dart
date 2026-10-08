@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// The transformer that applies a `RuleSet`.
+/// The rewriter that applies a `RuleSet`.
 ///
 /// Trusted for _completeness_ (every token that reaches the writer went
-/// through the rules), not for what it writes: that is `SaneHtmlWriter`.
+/// through the rules), not for what it writes: that is `HtmlWriter`.
 ///
 /// The only state is a counter for the element currently being dropped, so
 /// that `<x><x></x>still dropped</x>` drops the whole subtree. It never
@@ -23,17 +23,15 @@
 /// we did not, so any transformation based on nesting would be a guess.
 library;
 
+import 'element_rule.dart';
+import 'html_rewriter.dart';
 import 'html_token_sink.dart';
+import 'html_writer.dart' show isVoidElement;
 import 'rule_set.dart';
-import 'sane_html_writer.dart' show isVoidElement;
-import 'tag_rule.dart';
 
-/// A transformer that keeps the elements [rules] allow, with their
-/// attributes filtered, and drops every other element together with its
-/// content.
-///
-/// Must be the last transformer before the `SaneHtmlWriter`.
-HtmlTransformer sanitizer(RuleSet rules) => (next) => _Sanitizer(rules, next);
+/// See `HtmlRewriter.sanitizer`.
+HtmlRewriter sanitizer(RuleSet rules) =>
+    HtmlRewriter((next) => _Sanitizer(rules, next));
 
 final class _Sanitizer extends HtmlTokenSink {
   final RuleSet _rules;

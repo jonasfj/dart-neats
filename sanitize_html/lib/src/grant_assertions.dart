@@ -14,7 +14,7 @@
 
 /// # TRUSTED: grants a checked `RuleSet` refuses.
 ///
-/// `SaneHtmlWriter` guarantees the browser sees exactly the elements and
+/// `HtmlWriter` guarantees the browser sees exactly the elements and
 /// attributes a rule set lets through. These assertions make sure a rule set
 /// built with `RuleSet()` does not let through things that defeat the purpose
 /// of sanitizing: script execution, control over the host document, or URLs
@@ -27,7 +27,7 @@
 library;
 
 import 'attribute_rule.dart';
-import 'tag_rule.dart';
+import 'element_rule.dart';
 
 /// Elements a checked rule set may not allow.
 ///
@@ -74,21 +74,33 @@ const forbiddenElements = <String>{
 ///
 ///  * `style`: inline CSS can reposition content over the host page (and has
 ///    executed script in older engines).
-///  * `srcdoc`: an entire inline document for `<iframe>`.
-///    https://html.spec.whatwg.org/multipage/iframe-embed-object.html#attr-iframe-srcdoc
-///  * `is`: upgrades the element to a host-defined customized built-in.
-///    https://html.spec.whatwg.org/multipage/custom-elements.html#attr-is
-///  * `form`, `formaction`, `formtarget`, `formmethod`, `formenctype`:
+///  * [`srcdoc`][1]: an entire inline document for `<iframe>`.
+///  * [`is`][2]: upgrades the element to a host-defined customized built-in.
+///  * [`form`][3], `formaction`, `formtarget`, `formmethod`, `formenctype`:
 ///    associate a control with, or override the submission of, one of the
 ///    host page's forms.
-///    https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#attr-fae-form
-///  * `ping`, `attributionsrc`: requests to arbitrary URLs on activation.
-///    https://html.spec.whatwg.org/multipage/links.html#ping
+///  * [`ping`][4], `attributionsrc`: requests to arbitrary URLs on
+///    activation.
+///  * [`popovertarget`][5], `popovertargetaction`, [`command`][6],
+///    `commandfor`: a button that opens, closes or submits any element on
+///    the host page by id.
+///  * [`shadowrootmode`][7]: a `<template>` that becomes a shadow root of
+///    its parent, hiding or restyling the parent's content.
 ///
-/// Event handler attributes (`on*`) are refused by name prefix.
-/// https://html.spec.whatwg.org/multipage/webappapis.html#event-handler-content-attributes
+/// [Event handler attributes][8] (`on*`) are refused by name prefix.
+///
+/// [1]: https://html.spec.whatwg.org/multipage/iframe-embed-object.html#attr-iframe-srcdoc
+/// [2]: https://html.spec.whatwg.org/multipage/custom-elements.html#attr-is
+/// [3]: https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#attr-fae-form
+/// [4]: https://html.spec.whatwg.org/multipage/links.html#ping
+/// [5]: https://html.spec.whatwg.org/multipage/popover.html#attr-popovertarget
+/// [6]: https://html.spec.whatwg.org/multipage/form-elements.html#attr-button-commandfor
+/// [7]: https://html.spec.whatwg.org/multipage/scripting.html#attr-template-shadowrootmode
+/// [8]: https://html.spec.whatwg.org/multipage/webappapis.html#event-handler-content-attributes
 const forbiddenAttributes = <String>{
   'attributionsrc',
+  'command',
+  'commandfor',
   'form',
   'formaction',
   'formenctype',
@@ -96,17 +108,21 @@ const forbiddenAttributes = <String>{
   'formtarget',
   'is',
   'ping',
+  'popovertarget',
+  'popovertargetaction',
+  'shadowrootmode',
   'srcdoc',
   'style',
 };
 
 /// Attributes whose value a browser interprets as a URL; a checked rule set
-/// must bind them to [AttributeRule.url] or [AttributeRule.urlWhere]
-/// (`srcset` to [AttributeRule.srcset]).
+/// must bind them to [AttributeRule.url] (`srcset` to [AttributeRule.srcset]).
 ///
 /// The list is deliberately broad and includes attributes of elements that
-/// can never be allowed, so it holds without knowing the element.
-/// https://html.spec.whatwg.org/multipage/indices.html#attributes-3
+/// can never be allowed, so it holds without knowing the element. See the
+/// [attribute index][1].
+///
+/// [1]: https://html.spec.whatwg.org/multipage/indices.html#attributes-3
 const urlAttributes = <String>{
   'action',
   'background',
@@ -128,7 +144,7 @@ const urlAttributes = <String>{
 
 /// Throws [UnsupportedError] if [rule] for [tagName] grants something a
 /// checked rule set refuses.
-void checkGrants(String tagName, TagRule rule) {
+void checkGrants(String tagName, ElementRule rule) {
   if (forbiddenElements.contains(tagName)) {
     throw UnsupportedError(
       '<$tagName> cannot be allowed by RuleSet(); '
@@ -148,7 +164,7 @@ void checkGrants(String tagName, TagRule rule) {
     if (name == 'srcset' ? !rule.isSrcsetRestricted : !rule.isUrlRestricted) {
       throw UnsupportedError(
         '<$tagName $name=""> must use AttributeRule.'
-        '${name == 'srcset' ? 'srcset' : 'url or AttributeRule.urlWhere'} '
+        '${name == 'srcset' ? 'srcset' : 'url'}() '
         'in RuleSet(); use RuleSet.unsafe() if you really mean it',
       );
     }
