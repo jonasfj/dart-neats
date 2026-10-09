@@ -25,21 +25,7 @@ import 'package:html/dom.dart';
 import 'package:html/parser.dart' show parseFragment;
 
 import '../html_token_sink.dart';
-
-/// Elements whose content is not text in the browser's tokenizer.
-const _contentless = <String>{
-  'iframe',
-  'noembed',
-  'noframes',
-  'noscript',
-  'plaintext',
-  'script',
-  'style',
-  'template',
-  'textarea',
-  'title',
-  'xmp',
-};
+import 'elements.dart';
 
 /// See `HtmlTokenizer.dom`.
 void tokenizeDom(String html, HtmlTokenSink sink) {
@@ -77,8 +63,10 @@ void tokenizeDom(String html, HtmlTokenSink sink) {
         // The streaming tokenizers never emit the content of RAWTEXT,
         // RCDATA and script elements as text; do the same so that an
         // unwrapped `<script>` does not leave its code behind as text.
-        stack
-            .add((child, _contentless.contains(name) ? child.nodes.length : 0));
+        stack.add((
+          child,
+          contentlessElements.contains(name) ? child.nodes.length : 0
+        ));
       }
     } else if (node is Element) {
       sink.endTag(node.localName!.toLowerCase());

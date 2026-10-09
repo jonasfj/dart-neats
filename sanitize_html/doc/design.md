@@ -76,6 +76,15 @@ Explicitly **not** trusted, by design:
 * `lib/src/rewriters/*` — the built-in `HtmlRewriter`s, one per file:
   cosmetic and convenience. They run before the sanitizer and so can only
   ever add things that the rules then filter.
+* `lib/src/util/*` — ASCII predicates and the space-separated-token
+  splitter. Pure functions used by trusted and untrusted code alike; small
+  enough to read in a minute.
+
+Tests mirror this layout: `test/<file>_test.dart` for each top-level
+library, `test/rules/`, `test/rewriters/` and `test/tokenizer/` for the
+folders, `test/third_party_cases_test.dart` for cases borrowed from
+DOMPurify, html5lib, parse5 and Bleach, and `test/helpers.dart` for the
+shared `configured` pipeline and `testContains`/`testNotContains`.
 
 ## The promise, stated carefully
 

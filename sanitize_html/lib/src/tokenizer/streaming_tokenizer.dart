@@ -37,25 +37,14 @@
 library;
 
 import '../html_token_sink.dart';
-import 'ascii.dart';
+import '../util/ascii.dart';
+import 'elements.dart';
 import 'entities.dart';
 
 /// Elements whose content is text until the matching end tag, per the
 /// ["in body" insertion mode][1].
 ///
 /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inbody
-const _rawTextElements = <String>{
-  'iframe',
-  'noembed',
-  'noframes',
-  'noscript',
-  'style',
-  'template',
-  'textarea',
-  'title',
-  'xmp',
-};
-
 /// See `HtmlTokenizer.streaming`.
 void tokenizeStreaming(String html, HtmlTokenSink sink) =>
     _StreamingTokenizer(html, sink)._run();
@@ -136,7 +125,7 @@ final class _StreamingTokenizer {
     } else if (name == 'script') {
       _skipScriptData();
       _sink.endTag(name);
-    } else if (_rawTextElements.contains(name)) {
+    } else if (rawTextElements.contains(name)) {
       _skipRawText(name);
       _sink.endTag(name);
     } else if (name == 'plaintext') {

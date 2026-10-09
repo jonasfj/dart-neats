@@ -31,21 +31,9 @@
 library;
 
 import '../html_token_sink.dart';
-import 'ascii.dart';
+import '../util/ascii.dart';
+import 'elements.dart';
 import 'entities.dart';
-
-const _rawTextElements = <String>{
-  'iframe',
-  'noembed',
-  'noframes',
-  'noscript',
-  'script',
-  'style',
-  'template',
-  'textarea',
-  'title',
-  'xmp',
-};
 
 /// See `HtmlTokenizer.simple`.
 void tokenizeSimple(String html, HtmlTokenSink sink) {
@@ -152,7 +140,7 @@ void tokenizeSimple(String html, HtmlTokenSink sink) {
       sink.startTag(tagName, attributes);
       if (selfClosing && foreignContentElements.contains(tagName)) {
         sink.endTag(tagName);
-      } else if (_rawTextElements.contains(tagName)) {
+      } else if (tagName == 'script' || rawTextElements.contains(tagName)) {
         pos = _indexOfEndTag(html, tagName, pos);
         skipPast('>');
         sink.endTag(tagName);

@@ -17,7 +17,7 @@ library;
 
 import '../html_rewriter.dart';
 import '../html_token_sink.dart';
-import '../space_separated_tokens.dart';
+import '../util/space_separated_tokens.dart';
 
 /// See `HtmlRewriter.keepTokens`.
 HtmlRewriter keepTokens(String attribute, bool Function(String token) where) =>

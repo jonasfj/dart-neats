@@ -159,6 +159,7 @@ The **trusted base** is small and reviewable:
 Everything else is **untrusted** in the sense that a bug there can make
 output uglier (markup shown as text, content lost) but never unsafe:
 
+ * `lib/src/util/`: ASCII and space-separated-token helpers.
  * `lib/src/tokenizer/`: three interchangeable tokenizers.
    `HtmlTokenizer.streaming` (default) follows the WHATWG tokenizer states
    without building a tree; `HtmlTokenizer.simple` is about 120 lines for

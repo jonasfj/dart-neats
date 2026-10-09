@@ -64,7 +64,7 @@ library;
 
 import '../attribute_rule.dart';
 import '../element_rule.dart';
-import '../space_separated_tokens.dart';
+import '../util/space_separated_tokens.dart';
 import 'link_types.dart';
 import '../rule_set.dart';
 

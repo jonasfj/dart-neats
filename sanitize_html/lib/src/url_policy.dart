@@ -53,7 +53,7 @@
 /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#preprocessing-the-input-stream
 library;
 
-import 'space_separated_tokens.dart';
+import 'util/space_separated_tokens.dart';
 
 const _specialSchemes = {'https', 'http'};
 const _otherSchemes = {'mailto'};

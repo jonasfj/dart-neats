@@ -23,7 +23,7 @@
 /// [1]: https://html.spec.whatwg.org/multipage/links.html#linkTypes
 library;
 
-import '../space_separated_tokens.dart';
+import '../util/space_separated_tokens.dart';
 
 const _anchorLinkTypes = <String>{
   'alternate',

@@ -87,6 +87,7 @@
 library;
 
 import 'html_token_sink.dart';
+import 'util/ascii.dart';
 
 /// Maximum number of simultaneously open elements in the output.
 ///
@@ -132,13 +133,13 @@ bool isVoidElement(String name) => _voidElements.contains(name);
 ///
 /// `[a-z][a-z0-9._-]*`, except `image` (see point 5 above).
 bool isWritableTagName(String name) {
-  if (name.isEmpty || !_isAsciiLower(name.codeUnitAt(0))) {
+  if (name.isEmpty || !isAsciiLower(name.codeUnitAt(0))) {
     return false;
   }
   for (var i = 1; i < name.length; i++) {
     final c = name.codeUnitAt(i);
-    if (!_isAsciiLower(c) &&
-        !_isDigit(c) &&
+    if (!isAsciiLower(c) &&
+        !isAsciiDigit(c) &&
         c != 0x2E &&
         c != 0x2D &&
         c != 0x5F) {
@@ -152,13 +153,13 @@ bool isWritableTagName(String name) {
 ///
 /// `[a-z][a-z0-9_:.-]*`.
 bool isWritableAttributeName(String name) {
-  if (name.isEmpty || !_isAsciiLower(name.codeUnitAt(0))) {
+  if (name.isEmpty || !isAsciiLower(name.codeUnitAt(0))) {
     return false;
   }
   for (var i = 1; i < name.length; i++) {
     final c = name.codeUnitAt(i);
-    if (!_isAsciiLower(c) &&
-        !_isDigit(c) &&
+    if (!isAsciiLower(c) &&
+        !isAsciiDigit(c) &&
         c != 0x2E &&
         c != 0x2D &&
         c != 0x5F &&
@@ -309,12 +310,6 @@ final class HtmlWriter extends HtmlTokenSink {
       return false;
     }
     final c = source.codeUnitAt(i + 1);
-    return c == 0x23 /* # */ ||
-        _isDigit(c) ||
-        _isAsciiLower(c) ||
-        (c >= 0x41 && c <= 0x5A);
+    return c == 0x23 /* # */ || isAsciiDigit(c) || isAsciiAlpha(c);
   }
 }
-
-bool _isAsciiLower(int c) => c >= 0x61 && c <= 0x7A;
-bool _isDigit(int c) => c >= 0x30 && c <= 0x39;

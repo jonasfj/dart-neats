@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// Character helpers shared by the streaming tokenizers.
+/// ASCII character helpers.
 ///
 /// ## Why `codeUnitAt` is sound on UTF-16 strings
 ///
@@ -26,11 +26,11 @@
 /// unchanged. Nothing here classifies non-ASCII characters.
 library;
 
-/// Elements that switch the tokenizer into [foreign content][1], where `/>`
-/// on the element itself closes it.
-///
-/// [1]: https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inforeign
-const foreignContentElements = <String>{'math', 'svg'};
+/// Whether [c] is an ASCII lower-case letter.
+bool isAsciiLower(int c) => c >= 0x61 && c <= 0x7A;
+
+/// Whether [c] is an ASCII digit.
+bool isAsciiDigit(int c) => c >= 0x30 && c <= 0x39;
 
 /// Whether [c] is an ASCII letter.
 bool isAsciiAlpha(int c) =>
