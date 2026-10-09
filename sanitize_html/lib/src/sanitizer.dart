@@ -27,23 +27,21 @@
 /// dropped while that of a kept `<div>` is forwarded. The sanitizer keeps a
 /// stack of the start tags it has seen and matches end tags against it the
 /// way `HtmlWriter` does (an end tag closes the nearest open element of its
-/// name; without one it is ignored). The stack is capped like the writer's,
-/// a start tag at the cap replacing the innermost entry, so memory is
-/// bounded and every operation on it is O(cap). A mismatch between this
+/// name; without one it is ignored). The stack is capped at the writer's
+/// `maxDepth`, a start tag at the cap replacing the innermost entry, so
+/// memory is bounded and every operation on it is O(cap). A mismatch between this
 /// stack and the writer's only makes output uglier, never unsafe.
 library;
 
 import 'element_rule.dart';
 import 'html_rewriter.dart';
 import 'html_token_sink.dart';
-import 'html_writer.dart' show isVoidElement;
+import 'html_writer.dart' show isVoidElement, maxDepth;
 import 'rule_set.dart';
 
 /// See `HtmlRewriter.sanitizer`.
 HtmlRewriter sanitizer(RuleSet rules) =>
     HtmlRewriter((next) => _Sanitizer(rules, next));
-
-const _maxDepth = 512;
 
 final class _Sanitizer extends HtmlTokenSink {
   final RuleSet _rules;
@@ -62,7 +60,7 @@ final class _Sanitizer extends HtmlTokenSink {
   void startTag(String name, Map<String, String> attributes) {
     final kept = _rules.lookup(name)?.apply(attributes);
     if (!isVoidElement(name)) {
-      if (_open.length >= _maxDepth) {
+      if (_open.length >= maxDepth) {
         _open.removeLast();
       }
       _open.add((name, kept != null));

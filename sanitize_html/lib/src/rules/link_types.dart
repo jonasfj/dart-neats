@@ -23,6 +23,8 @@
 /// [1]: https://html.spec.whatwg.org/multipage/links.html#linkTypes
 library;
 
+import '../space_separated_tokens.dart';
+
 const _anchorLinkTypes = <String>{
   'alternate',
   'author',
@@ -47,14 +49,3 @@ const _anchorLinkTypes = <String>{
 /// Whether [value] is a non-empty list of link types for `<a>`.
 bool isAnchorRelList(String value) =>
     everyToken(value, _anchorLinkTypes.contains);
-
-/// Whether [value] is a non-empty [space-separated list][1] whose every
-/// token satisfies [test].
-///
-/// [1]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#space-separated-tokens
-bool everyToken(String value, bool Function(String token) test) {
-  final tokens = value.split(_asciiWhitespace).where((t) => t.isNotEmpty);
-  return tokens.isNotEmpty && tokens.every(test);
-}
-
-final _asciiWhitespace = RegExp(r'[ \t\n\f\r]+');

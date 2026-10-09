@@ -28,9 +28,9 @@
 /// linear.
 library;
 
-import 'html_rewriter.dart';
-import 'html_token_sink.dart';
-import 'html_writer.dart' show isVoidElement;
+import '../html_rewriter.dart';
+import '../html_token_sink.dart';
+import '../html_writer.dart' show isVoidElement;
 
 /// See `HtmlRewriter.impliedEndTags`.
 HtmlRewriter impliedEndTags() => const HtmlRewriter(_ImpliedEndTags.new);

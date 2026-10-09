@@ -17,7 +17,7 @@ library;
 
 import 'attribute_rule.dart';
 import 'element_rule.dart';
-import 'gfm_rules.dart' show gfmElements;
+import 'rules/gfm.dart' show gfmElements;
 import 'html_rewriter.dart';
 import 'html_token_sink.dart';
 import 'html_tokenizer.dart';

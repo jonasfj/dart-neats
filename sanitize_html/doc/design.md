@@ -60,7 +60,7 @@ safety means reviewing these.
 | `lib/src/attribute_rule.dart` | How each `AttributeRule` keeps or drops a value. | It is where the URL policy is actually invoked. A bug here could keep a value the policy rejected. |
 | `lib/src/element_rule.dart`, `lib/src/rule_set.dart` | Which elements have rules, which attributes each keeps, how rule sets combine. | They decide what reaches the writer. |
 | `lib/src/grant_assertions.dart` | What a checked `RuleSet()` refuses to allow. | This is the list that turns "the browser creates nothing extra" into "no script runs". |
-| `lib/src/gfm_rules.dart`, `lib/src/html_rules.dart`, `lib/src/link_types.dart` | The default allowlists. | Policy data. No logic, but a wrong entry is a wrong default. |
+| `lib/src/rules/*` | The default allowlists: `gfm.dart`, `html.dart`, `link_types.dart`. | Policy data. No logic, but a wrong entry is a wrong default. |
 
 Explicitly **not** trusted, by design:
 
@@ -73,9 +73,9 @@ Explicitly **not** trusted, by design:
 * `lib/src/sanitizer.dart` — trusted for *completeness* (every token that
   reaches the writer passed through the rules), which is a five-line
   argument, not for what it writes.
-* `lib/src/implied_end_tags.dart`, `lib/src/rewriters.dart` — cosmetic and
-  convenience. They run before the sanitizer and so can only ever add things
-  that the rules then filter.
+* `lib/src/rewriters/*` — the built-in `HtmlRewriter`s, one per file:
+  cosmetic and convenience. They run before the sanitizer and so can only
+  ever add things that the rules then filter.
 
 ## The promise, stated carefully
 
@@ -263,9 +263,13 @@ nothing.
 ### Depth is capped the way Blink caps it
 
 Blink stops nesting at 512 (`kMaximumHTMLParserDOMTreeDepth`): a deeper
-element is attached as a sibling of the innermost one. The writer does the
-same at 128, and `HtmlRewriter.impliedEndTags()` at 512 for the stack it uses to model the
-input. A start tag at the cap closes the innermost open element and takes its
+element is attached as a sibling of the innermost one. Three stacks in the
+pipeline are bounded the same way, with two constants: the writer caps the
+*output* at 128 — Blink's limit counts the host document's depth, which we
+cannot know, and a quarter leaves any plausible host room so the browser
+never flattens sanitized output itself — and the sanitizer uses the writer's
+constant because its stack approximates the writer's; `impliedEndTags`
+caps at 512 because it imitates Blink on the *input*. A start tag at the cap closes the innermost open element and takes its
 place. Nothing is dropped, nothing is counted, every stack stays bounded, so
 every scan of a stack is O(1) and the pipeline is linear in the input. The
 alternative — swallowing start tags beyond the cap and counting their end

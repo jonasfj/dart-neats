@@ -66,7 +66,7 @@
 ///    > not in this list because it is not an element; it gets turned into an
 ///    > img element.
 /// 6. Every element the writer opens is closed by the writer. Nesting is
-///    capped at [_maxDepth] the way Blink caps the document at 512: a start
+///    capped at [maxDepth] the way Blink caps the document at 512: a start
 ///    tag at the cap closes the innermost open element and becomes its
 ///    sibling, so the stack stays bounded and the output balanced. (Blink's
 ///    cap counts the host document's depth too; it only flattens, it never
@@ -88,8 +88,14 @@ library;
 
 import 'html_token_sink.dart';
 
-/// Maximum number of simultaneously open elements.
-const _maxDepth = 128;
+/// Maximum number of simultaneously open elements in the output.
+///
+/// Blink flattens at 512 (`kMaximumHTMLParserDOMTreeDepth`), counting the
+/// host document's own depth, which this package cannot know. A quarter of
+/// that leaves any plausible host enough room that the browser never
+/// flattens sanitized output itself. Package-private; the sanitizer uses the
+/// same bound so its view of the open elements matches the writer's.
+const maxDepth = 128;
 
 /// Elements the parser never gives children or an end tag.
 ///
@@ -191,7 +197,7 @@ final class HtmlWriter extends HtmlTokenSink {
       throw ArgumentError.value(name, 'name', 'not a writable tag name');
     }
     final isVoid = _voidElements.contains(name);
-    if (!isVoid && _open.length >= _maxDepth) {
+    if (!isVoid && _open.length >= maxDepth) {
       _writeEndTag(_open.removeLast());
     }
     _out

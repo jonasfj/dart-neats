@@ -53,6 +53,8 @@
 /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#preprocessing-the-input-stream
 library;
 
+import 'space_separated_tokens.dart';
+
 const _specialSchemes = {'https', 'http'};
 const _otherSchemes = {'mailto'};
 
@@ -159,7 +161,7 @@ String? cleanUrl(String url) {
 List<String>? cleanSrcset(String srcset) {
   final urls = <String>[];
   for (final candidate in srcset.split(',')) {
-    final parts = candidate.trim().split(_asciiWhitespace);
+    final parts = candidate.trim().split(asciiWhitespace);
     if (parts.length > 2 || parts.first.isEmpty) {
       return null;
     }
@@ -175,7 +177,6 @@ List<String>? cleanSrcset(String srcset) {
   return urls;
 }
 
-final _asciiWhitespace = RegExp(r'[ \t\n\f\r]+');
 final _srcsetDescriptor = RegExp(r'^(?:[0-9]+w|[0-9]*\.?[0-9]+x)$');
 
 bool _endsAuthority(int c) =>

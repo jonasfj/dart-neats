@@ -152,8 +152,9 @@ The **trusted base** is small and reviewable:
    [`lib/src/rule_set.dart`](lib/src/rule_set.dart): how rules are applied.
  * [`lib/src/grant_assertions.dart`](lib/src/grant_assertions.dart): what a
    checked `RuleSet` refuses, and why.
- * [`lib/src/gfm_rules.dart`](lib/src/gfm_rules.dart): the default allowlists
-   (policy data, no logic that affects escaping).
+ * [`lib/src/rules/`](lib/src/rules/): the default allowlists `gfm.dart`,
+   `html.dart` and `link_types.dart` (policy data, no logic that affects
+   escaping), each rule annotated with its source.
 
 Everything else is **untrusted** in the sense that a bug there can make
 output uglier (markup shown as text, content lost) but never unsafe:
@@ -168,9 +169,10 @@ output uglier (markup shown as text, content lost) but never unsafe:
    size).
  * `lib/src/sanitizer.dart`: applies the rule set; its only state is a
    capped stack telling which end tags belong to unwrapped start tags.
- * `lib/src/implied_end_tags.dart`: the tree builder's implied end tags, so
-   sloppy input gives tidy output.
- * `lib/src/rewriters.dart`: the built-in `HtmlRewriter`s.
+ * `lib/src/rewriters/`: the built-in `HtmlRewriter`s, one per file —
+   `implied_end_tags.dart` (the tree builder's implied end tags, so sloppy
+   input gives tidy output), `attributes.dart`, `prefix_ids.dart`,
+   `keep_tokens.dart`, `drop_elements.dart`.
 
 Because the writer escapes attribute values exactly, the URL policy and the
 browser's URL parser see identical strings (up to the HTML parser's

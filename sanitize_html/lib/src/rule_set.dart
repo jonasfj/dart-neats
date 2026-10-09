@@ -15,8 +15,8 @@
 /// # TRUSTED: which elements a sanitizer keeps.
 library;
 
-import 'gfm_rules.dart' show gfmRuleSet;
-import 'html_rules.dart' show htmlRuleSet;
+import 'rules/gfm.dart' show gfmRuleSet;
+import 'rules/html.dart' show htmlRuleSet;
 import 'grant_assertions.dart';
 import 'html_writer.dart' show isWritableAttributeName, isWritableTagName;
 import 'attribute_rule.dart';

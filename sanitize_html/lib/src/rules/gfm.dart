@@ -62,10 +62,11 @@
 /// [5]: https://html.spec.whatwg.org/multipage/links.html#linkTypes
 library;
 
-import 'attribute_rule.dart';
-import 'element_rule.dart';
+import '../attribute_rule.dart';
+import '../element_rule.dart';
+import '../space_separated_tokens.dart';
 import 'link_types.dart';
-import 'rule_set.dart';
+import '../rule_set.dart';
 
 /// Elements, from html-pipeline unless noted.
 const gfmElements = <String>{

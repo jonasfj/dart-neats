@@ -41,10 +41,10 @@
 /// [1]: https://github.com/google/safevalues/blob/main/src/builders/html_sanitizer/sanitizer_table/default_sanitizer_table.ts
 library;
 
-import 'attribute_rule.dart';
-import 'element_rule.dart';
+import '../attribute_rule.dart';
+import '../element_rule.dart';
 import 'link_types.dart';
-import 'rule_set.dart';
+import '../rule_set.dart';
 
 /// safevalues `ALLOWED_ELEMENTS`.
 const _elements = <String>{

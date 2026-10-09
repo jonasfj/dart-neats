@@ -16,8 +16,11 @@
 library;
 
 import 'html_token_sink.dart';
-import 'implied_end_tags.dart' as implied_end_tags;
-import 'rewriters.dart' as rewriters;
+import 'rewriters/attributes.dart' as attributes;
+import 'rewriters/drop_elements.dart' as drop_elements;
+import 'rewriters/implied_end_tags.dart' as implied_end_tags;
+import 'rewriters/keep_tokens.dart' as keep_tokens;
+import 'rewriters/prefix_ids.dart' as prefix_ids;
 import 'rule_set.dart';
 import 'sanitizer.dart' as sanitizer;
 
@@ -57,7 +60,7 @@ final class HtmlRewriter {
     String tagName,
     void Function(Map<String, String> attributes) rewrite,
   ) =>
-      rewriters.rewriteAttributes(tagName, rewrite);
+      attributes.rewriteAttributes(tagName, rewrite);
 
   /// Adds the `rel` tokens returned by [rel] to every `<a>` with an `href`.
   ///
@@ -73,7 +76,7 @@ final class HtmlRewriter {
   ///
   /// [1]: https://support.google.com/webmasters/answer/96569
   factory HtmlRewriter.addLinkRel(List<String> Function(String href) rel) =>
-      rewriters.addLinkRel(rel);
+      attributes.addLinkRel(rel);
 
   /// Prefixes every `id` with [prefix], and every `href` fragment (`#x`)
   /// to match, leaving values that already have the prefix alone.
@@ -86,7 +89,7 @@ final class HtmlRewriter {
   /// ```dart
   /// HtmlRewriter.prefixIds('user-content-')
   /// ```
-  factory HtmlRewriter.prefixIds(String prefix) => rewriters.prefixIds(prefix);
+  factory HtmlRewriter.prefixIds(String prefix) => prefix_ids.prefixIds(prefix);
 
   /// Keeps only the space-separated tokens of [attribute] for which [where]
   /// returns `true`, dropping the attribute when none is left.
@@ -98,14 +101,14 @@ final class HtmlRewriter {
     String attribute,
     bool Function(String token) where,
   ) =>
-      rewriters.keepTokens(attribute, where);
+      keep_tokens.keepTokens(attribute, where);
 
   /// Drops every element named in [names] together with its content.
   ///
   /// The rules only unwrap what they do not keep; use this to remove
   /// subtrees instead, e.g. `HtmlRewriter.dropElements({'nav', 'aside'})`.
   factory HtmlRewriter.dropElements(Set<String> names) =>
-      rewriters.dropElements(names);
+      drop_elements.dropElements(names);
 
   /// Closes open elements a start tag implicitly ends, as the browser's
   /// tree builder would: `<p>` by block elements, `<li>` by `<li>`, cells
