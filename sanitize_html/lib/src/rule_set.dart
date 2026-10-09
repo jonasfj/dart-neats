@@ -16,13 +16,16 @@
 library;
 
 import 'gfm_rules.dart' show gfmRuleSet;
+import 'html_rules.dart' show htmlRuleSet;
 import 'grant_assertions.dart';
 import 'html_writer.dart' show isWritableAttributeName, isWritableTagName;
+import 'attribute_rule.dart';
 import 'element_rule.dart';
 
 /// The elements a sanitizer keeps, and how their attributes are filtered.
 ///
-/// Elements without a rule are removed together with their content.
+/// An element without a rule, or whose `ElementRule.requires` is not met,
+/// is unwrapped: its tags are dropped, its content is kept.
 ///
 /// ```dart
 /// final rules = RuleSet.gfm().union(RuleSet({
@@ -74,42 +77,111 @@ final class RuleSet {
       if (!isWritableTagName(name)) {
         throw ArgumentError.value(name, 'rules', 'not a writable tag name');
       }
-      for (final attribute in rule.attributes.keys) {
-        if (!isWritableAttributeName(attribute)) {
-          throw ArgumentError.value(
-            attribute,
-            'rules',
-            'not a writable attribute name on <$name>',
-          );
+      for (final (:attributes, :requires) in rule.leaves) {
+        for (final attribute in attributes.keys) {
+          if (!isWritableAttributeName(attribute)) {
+            throw ArgumentError.value(
+              attribute,
+              'rules',
+              'not a writable attribute name on <$name>',
+            );
+          }
         }
-      }
-      if (checked) {
-        checkGrants(name, rule);
+        for (final attribute in requires) {
+          if (!attributes.containsKey(attribute)) {
+            throw ArgumentError.value(
+              attribute,
+              'rules',
+              'required on <$name> but has no attribute rule',
+            );
+          }
+        }
+        if (checked) {
+          checkGrants(name, attributes);
+        }
       }
     }
   }
 
   RuleSet._combined(this._rules);
 
-  /// Rules modelled on the [sanitization GitHub applies to Markdown][1].
+  /// The rules for Markdown rendered by `package:markdown` with
+  /// `ExtensionSet.gitHubWeb` or `gitHubFlavored`, raw HTML included.
   ///
-  /// `id` and `class` attributes are dropped unless [allowElementId] /
-  /// [allowClassName] is `true`; use a rewriter to limit which values are
-  /// kept.
+  /// Elements and attributes follow [html-pipeline][1], the open-source
+  /// origin of GitHub's Markdown pipeline, plus what `package:markdown`
+  /// emits. Attributes that reach outside the content are not kept:
   ///
-  /// [1]: https://github.com/jch/html-pipeline/blob/master/lib/html/pipeline/sanitization_filter.rb
-  factory RuleSet.gfm({
-    bool allowElementId = false,
-    bool allowClassName = false,
+  ///  * `id` only with the `user-content-` prefix (`HtmlRewriter.prefixIds`
+  ///    adds it), `name` never;
+  ///  * `class` only with `markdown-*` tokens, and `language-*` on `<code>`;
+  ///  * `rel` only with the link types defined for `<a>`, never `opener`;
+  ///  * no `accesskey`, `tabindex`, `for`, `usemap`, `aria-describedby`,
+  ///    `aria-labelledby` or form attributes;
+  ///  * `<input>` only as `type="checkbox"`.
+  ///
+  /// [1]: https://github.com/gjtorikian/html-pipeline/blob/c99d76dbfe817598387c371af342e25abdccd363/lib/html_pipeline/sanitization_filter.rb
+  factory RuleSet.gfm() => gfmRuleSet;
+
+  /// The rules for arbitrary HTML: everything that cannot reach outside the
+  /// sanitized content.
+  ///
+  /// The element and attribute tables of [safevalues][1], Google's HTML
+  /// sanitizer, verbatim, with URL attributes checked by this package's
+  /// policy, `rel` limited to the link types defined for `<a>`, `target` to
+  /// `_self`/`_blank`, and no `<link>`. Like safevalues it keeps no `id`,
+  /// `name`, `class` or `style`, and no `<iframe>`, `<form>`, `<input>`,
+  /// `<button>`, `<textarea>` or `<label>`; add what the host can afford
+  /// with [union].
+  ///
+  /// [1]: https://github.com/google/safevalues/blob/main/src/builders/html_sanitizer/sanitizer_table/default_sanitizer_table.ts
+  factory RuleSet.html() => htmlRuleSet;
+
+  /// An `<iframe>` rule for embeds from origins [where] accepts, to [union]
+  /// with another rule set.
+  ///
+  /// The frame is kept only with a `src` for which [where] returns `true`
+  /// and a `sandbox` attribute equal to [sandbox]; otherwise it is
+  /// unwrapped. `width`, `height`, `title`, `loading` and `allowfullscreen`
+  /// are kept. Nothing else: `allow` would delegate the host's permissions,
+  /// `name` would catch the host's `target`s.
+  ///
+  /// ```dart
+  /// RuleSet.gfm().union(RuleSet.iframe(
+  ///   where: (src) =>
+  ///       src.host == 'www.youtube.com' && src.path.startsWith('/embed/'),
+  ///   sandbox: 'allow-scripts',
+  /// ))
+  /// ```
+  ///
+  /// Authors rarely write `sandbox`; set it with a rewriter before the
+  /// rules: `HtmlRewriter.attributes('iframe', (a) => a['sandbox'] =
+  /// 'allow-scripts')`. Never grant `allow-same-origin` together with
+  /// `allow-scripts` to a frame from the host's own origin: it could remove
+  /// its sandbox.
+  factory RuleSet.iframe({
+    required bool Function(Uri src) where,
+    String sandbox = '',
   }) =>
-      gfmRuleSet(
-        allowElementId: allowElementId,
-        allowClassName: allowClassName,
-      );
+      RuleSet({
+        'iframe': ElementRule(
+          requires: const {'src', 'sandbox'},
+          attributes: {
+            'src': AttributeRule.url(where),
+            'sandbox': AttributeRule.where((value) => value == sandbox),
+            'allowfullscreen': const AttributeRule.any(),
+            'height': const AttributeRule.any(),
+            'loading': AttributeRule.where(const {'eager', 'lazy'}.contains),
+            'title': const AttributeRule.any(),
+            'width': const AttributeRule.any(),
+          },
+        ),
+      });
 
   /// A rule set allowing elements allowed by either rule set.
   ///
-  /// For an element in both, an attribute is kept if either rule keeps it.
+  /// For an element in both, an attribute is kept if either rule keeps it,
+  /// and the element is kept if either rule's requirements are met.
   ///
   /// A union with a [RuleSet.unsafe] is as unsafe as that rule set.
   RuleSet union(RuleSet other) => RuleSet._combined(Map.unmodifiable({
@@ -125,7 +197,7 @@ final class RuleSet {
   /// only attributes kept by both rules.
   ///
   /// Sanitizing with it is the same as sanitizing with this rule set and
-  /// then with [other].
+  /// then with [other]; an element must meet the requirements of both.
   RuleSet intersection(RuleSet other) => RuleSet._combined(Map.unmodifiable({
         for (final MapEntry(key: name, value: rule) in _rules.entries)
           if (other._rules[name] case final theirs?)

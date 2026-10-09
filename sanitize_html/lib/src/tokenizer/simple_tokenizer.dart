@@ -41,6 +41,7 @@ const _rawTextElements = <String>{
   'noscript',
   'script',
   'style',
+  'template',
   'textarea',
   'title',
   'xmp',

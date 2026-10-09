@@ -14,6 +14,7 @@
 
 import 'package:html/dom.dart' show Element, Text;
 import 'package:html/parser.dart' show parseFragment;
+import 'package:markdown/markdown.dart' as md;
 import 'package:sanitize_html/sanitize_html.dart';
 import 'package:test/test.dart';
 
@@ -23,12 +24,18 @@ const tokenizers = {
   'dom': HtmlTokenizer.dom,
 };
 
-/// A sanitizer with id / class allowed and limited by a rewriter, an extra
-/// element and a `rel` rewriter, exercising the configuration surface.
+/// A sanitizer with any id / class allowed on `<span>` by the rules and
+/// limited by a rewriter, an extra element and a `rel` rewriter, exercising
+/// the configuration surface.
 String configured(String html) => sanitizeHtml(
       html,
-      rules: RuleSet.gfm(allowElementId: true, allowClassName: true)
-          .union(RuleSet({'only-allowed-tag': const ElementRule()})),
+      rules: RuleSet.gfm().union(RuleSet({
+        'only-allowed-tag': const ElementRule(),
+        'span': ElementRule(attributes: {
+          'id': AttributeRule.any(),
+          'class': AttributeRule.any(),
+        }),
+      })),
       rewriters: [
         HtmlRewriter(_LimitIdAndClass.new),
         HtmlRewriter.addLinkRel(
@@ -210,7 +217,7 @@ void main() {
       '<only-allowed-tag>hello</only-allowed-tag>', '<only-allowed-tag>');
   testContains('<only-allowed-tag>hello</only-allowed-tag>', 'hello');
   testNotContains('<disallowed-tag>hello</disallowed-tag>', 'disallowed-tag');
-  testNotContains('<disallowed-tag>hello</disallowed-tag>', 'hello');
+  testContains('<disallowed-tag>hello</disallowed-tag>', 'hello');
 
   // test <picture> and <source>
   testContains('<picture><img src="banner.webp"/></picture>', '<picture>');
@@ -356,8 +363,9 @@ void main() {
         sanitizeHtml('<p><button>x<div>y', rules: withButton),
         '<p><button>x<div>y</div></button></p>',
       );
-      // ... even when the button itself is dropped, as in a browser.
-      expect(sanitizeHtml('<p><button>x<div>y'), '<p></p>');
+      // ... even when the button itself is unwrapped: a browser re-parsing
+      // the output would close the <p>, which only changes nesting.
+      expect(sanitizeHtml('<p><button>x<div>y'), '<p>x<div>y</div></p>');
     });
   });
 
@@ -410,7 +418,8 @@ void main() {
   group('Defaults:', () {
     testContains('<a href="any-href">hey', 'href=', withConfiguration: false);
     testNotContains('<a href="any-href">hey', 'rel=', withConfiguration: false);
-    testNotContains('<any-tag>hello</any-tag>', 'hello',
+    testContains('<any-tag>hello</any-tag>', 'hello', withConfiguration: false);
+    testNotContains('<any-tag>hello</any-tag>', 'any-tag',
         withConfiguration: false);
     testNotContains('<span id="any-id">hello</span>', 'id=',
         withConfiguration: false);
@@ -445,7 +454,8 @@ void main() {
         '<form onmouseover="alert(1)"><input name="attributes"><input name="attributes">',
         'onmouseover');
     testNotContains('<img src=x onerror=alert(1)>', 'onerror');
-    testContains('<a name="anchor">top</a>', 'name="anchor"');
+    // `name` is a clobbering surface like `id`; gfm drops it.
+    testNotContains('<a name="anchor">top</a>', 'name=');
     testNotContains(
         '<div onclick=alert(0)><form onsubmit=alert(1)><input onfocus=alert(2) name=parentNode>123</form></div>',
         'on');
@@ -454,7 +464,7 @@ void main() {
         '<div onanimationstart="alert(1)">foo</div>', 'onanimationstart');
     testContains(
         '<div aria-labelledby="msg--title"><span aria-label="close">close</span></div>',
-        'aria-labelledby="msg--title"',
+        'aria-label="close"',
         withConfiguration: false);
     testNotContains(r'''<a href="javascript:alert('XSS');">foo</a>''', 'href');
     testNotContains(
@@ -562,16 +572,17 @@ void main() {
     });
 
     test('Nested script tags', () {
+      // Script content is never text; what is left is escaped text.
       final result1 = sanitizeHtml('<<script>script>evil()<</script>/script>');
       expect(result1, contains('&lt;'));
       expect(result1, isNot(contains('evil')));
 
       final result2 = sanitizeHtml('<<x>script>evil()<</x>/script>');
       expect(result2, contains('&lt;'));
-      expect(result2, isNot(contains('evil')));
+      expect(result2, isNot(contains('<script')));
 
       final result3 = sanitizeHtml('<script<script>>evil()</script</script>>');
-      expect(result3, isNot(contains('evil')));
+      expect(result3, isNot(contains('<script')));
     });
 
     test('Bare entities get escaped correctly', () {
@@ -733,11 +744,10 @@ void main() {
           sanitizeHtml('<link rel="stylesheet" href="x.css">hello'), 'hello');
     });
 
-    test('Disallowed non-void self-closing tags drop subtree', () {
+    test('Disallowed non-void self-closing tags are unwrapped', () {
       expect(sanitizeHtml('<custom-disallowed />secret</custom-disallowed>'),
-          isNot(contains('secret')));
-      // `<x/>` nests like `<x>` inside dropped content too.
-      expect(sanitizeHtml('<x><x/>a</x>b</x>c'), 'c');
+          'secret');
+      expect(sanitizeHtml('<x><x/>a</x>b</x>c'), 'abc');
     });
 
     test('Attribute name breakout on custom elements is strictly blocked', () {
@@ -962,13 +972,171 @@ void main() {
         'u': const ElementRule(),
       });
       String s(String html) => sanitizeHtml(html, rules: a.intersection(b));
-      expect(s('<i>x</i><u>y</u><b>z</b>'), '<b>z</b>');
+      expect(s('<i>x</i><u>y</u><b>z</b>'), 'xy<b>z</b>');
       expect(s('<b title="ab" lang="en">x</b>'), '<b title="ab">x</b>');
       expect(s('<b title="a">x</b>'), '<b>x</b>');
     });
 
-    test('gfm with id and class passes the grant assertions', () {
-      RuleSet.gfm(allowElementId: true, allowClassName: true);
+    test('elements without a rule are unwrapped, not dropped', () {
+      expect(sanitizeHtml('<b><x>a<y>b</y>c</x></b>'), '<b>abc</b>');
+      // Content the browser never renders as text is not kept either.
+      expect(
+          sanitizeHtml('<script>a</script><style>b</style><template>c'
+              '</template><textarea>d</textarea>'),
+          '');
+    });
+
+    test('requires unwraps the element when a required attribute is missing',
+        () {
+      final rules = RuleSet({
+        'input': ElementRule(
+          requires: {'type'},
+          attributes: {
+            'type': AttributeRule.where((v) => v == 'checkbox'),
+            'checked': AttributeRule.any(),
+          },
+        ),
+        'div': ElementRule(
+          requires: {'title'},
+          attributes: {'title': AttributeRule.any()},
+        ),
+      });
+      String s(String html) => sanitizeHtml(html, rules: rules);
+      expect(s('<input type="checkbox" checked>'),
+          '<input type="checkbox" checked="">');
+      expect(s('<input type="text">x'), 'x');
+      expect(s('<input>x'), 'x');
+      // The end tag of an unwrapped element is dropped with it, so the
+      // kept outer <div> is closed by its own end tag.
+      expect(
+          s('<div title="t"><div>x</div>y</div>z'), '<div title="t">xy</div>z');
+      expect(
+          s('<div><div title="t">x</div>y</div>z'), '<div title="t">x</div>yz');
+      expect(
+        () => RuleSet({
+          'a': ElementRule(requires: {'href'}),
+        }),
+        throwsArgumentError,
+      );
+    });
+
+    test('union keeps an element if either rule keeps it', () {
+      final a = RuleSet({
+        'iframe': ElementRule(
+          requires: {'src', 'sandbox'},
+          attributes: {
+            'src': AttributeRule.url((u) => u.host == 'a.example'),
+            'sandbox': AttributeRule.where((v) => v == 'allow-scripts'),
+          },
+        ),
+      });
+      final b = RuleSet({
+        'iframe': ElementRule(
+          requires: {'src'},
+          attributes: {
+            'src': AttributeRule.url((u) => u.host == 'b.example'),
+            'width': AttributeRule.any(),
+          },
+        ),
+      });
+      String s(String html) => sanitizeHtml(html, rules: a.union(b));
+      expect(s('<iframe src="https://a.example/" sandbox="allow-scripts">'),
+          '<iframe src="https://a.example/" sandbox="allow-scripts"></iframe>');
+      expect(s('<iframe src="https://b.example/" width="1">'),
+          '<iframe src="https://b.example/" width="1"></iframe>');
+      // Neither rule keeps this: a requires sandbox, b does not know the
+      // host. Flattening the requirements to {src} would have kept it.
+      expect(s('<iframe src="https://a.example/"></iframe>x'), 'x');
+      // Kept by b only, so only b's attribute grants apply: the result is
+      // the union of what each rule would have produced.
+      expect(s('<iframe src="https://b.example/" sandbox="allow-scripts">'),
+          '<iframe src="https://b.example/"></iframe>');
+    });
+
+    test('intersection applies the requirements of both', () {
+      final a = RuleSet({
+        'a': ElementRule(
+          requires: {'href'},
+          attributes: {
+            'href': AttributeRule.url(),
+            'title': AttributeRule.any()
+          },
+        ),
+      });
+      final b = RuleSet({
+        'a': ElementRule(
+          requires: {'title'},
+          attributes: {'title': AttributeRule.any()},
+        ),
+      });
+      String s(String html) => sanitizeHtml(html, rules: a.intersection(b));
+      expect(s('<a href="/x" title="t">x</a>'), '<a title="t">x</a>');
+      expect(s('<a href="/x">x</a>'), 'x');
+      expect(s('<a title="t">x</a>'), 'x');
+    });
+
+    test('html keeps what safevalues keeps, checked by our policies', () {
+      String s(String html) => sanitizeHtml(html, rules: RuleSet.html());
+      expect(
+          s('<article><select><option selected>x</option></select>'
+              '<progress max="2" value="1"></progress></article>'),
+          '<article><select><option selected="">x</option></select>'
+          '<progress max="2" value="1"></progress></article>');
+      expect(
+          s('<iframe src="/x"></iframe><input><label for="y">a</label>'
+              '<button>b</button><link rel="stylesheet" href="x.css">'),
+          'ab');
+      expect(s('<div id="x" name="y" class="z" style="a" title="t">a</div>'),
+          '<div title="t">a</div>');
+      expect(s('<a href="/x" target="_blank" rel="noopener">a</a>'),
+          '<a href="/x" target="_blank" rel="noopener">a</a>');
+      expect(s('<a href="javascript:x" target="top" rel="opener">a</a>'),
+          '<a>a</a>');
+      expect(
+          s('<video src="https://e.x/v" poster="javascript:x" autoplay>'
+              '</video>'),
+          '<video src="https://e.x/v" autoplay=""></video>');
+      expect(s('<bdo dir="rtl">a</bdo><bdo dir="foo">b</bdo>'),
+          '<bdo dir="rtl">a</bdo><bdo>b</bdo>');
+      expect(s('<q cite="data:x">a</q>'), '<q>a</q>');
+    });
+
+    test('gfm keeps what package:markdown emits', () {
+      String s(String html) => sanitizeHtml(html);
+      expect(s('<h2 id="user-content-usage">Usage</h2>'),
+          '<h2 id="user-content-usage">Usage</h2>');
+      expect(s('<h2 id="usage">Usage</h2>'), '<h2>Usage</h2>');
+      expect(s('<a name="x" id="getElementById">y</a>'), '<a>y</a>');
+      expect(
+          s('<pre data-metadata="title=x"><code class="language-dart">'
+              'a</code></pre>'),
+          '<pre data-metadata="title=x"><code class="language-dart">a</code>'
+          '</pre>');
+      expect(s('<div class="language-dart">a</div>'), '<div>a</div>');
+      expect(s('<div class="markdown-alert markdown-alert-note">a</div>'),
+          '<div class="markdown-alert markdown-alert-note">a</div>');
+      expect(s('<div class="markdown-alert host">a</div>'), '<div>a</div>');
+      expect(
+          s('<ul class="contains-task-list"><li class="task-list-item">'
+              '<input type="checkbox" checked="true">x</li></ul>'),
+          '<ul class="contains-task-list"><li class="task-list-item">'
+          '<input type="checkbox" checked="true">x</li></ul>');
+      expect(s('<input type="text" value="x">'), '');
+      expect(s('<input>'), '');
+      expect(
+          s('<ol start="3"><li>x</li></ol>'), '<ol start="3"><li>x</li></ol>');
+      expect(s('<td align="center">x</td>'), '<td align="center">x</td>');
+      expect(
+          s('<section class="footnotes"><ol><li id="user-content-fn-1">'
+              '<a href="#user-content-fnref-1" class="footnote-backref">↩</a>'
+              '</li></ol></section>'),
+          '<section class="footnotes"><ol><li id="user-content-fn-1">'
+          '<a href="#user-content-fnref-1" class="footnote-backref">↩</a>'
+          '</li></ol></section>');
+      expect(s('<a href="/x" accesskey="a" tabindex="1" for="y">x</a>'),
+          '<a href="/x">x</a>');
+      expect(s('<h7>x</h7><a href="/x" target="_blank">y</a>'),
+          'x<a href="/x">y</a>');
     });
   });
 
@@ -980,18 +1148,155 @@ void main() {
               attributes['onclick'] = 'alert(1)';
             }),
           ]);
-      // Default rules allow no `id`, so the rewrite is filtered out.
+      // The rules keep only prefixed ids, so the rewrite is filtered out.
       expect(sanitize('<h2>x</h2>'), '<h2>x</h2>');
       String withIds(String html) => sanitizeHtml(
             html,
-            rules: RuleSet.gfm(allowElementId: true),
             rewriters: [
-              HtmlRewriter.attributes(
-                  'h2', (attributes) => attributes['id'] = 'heading'),
+              HtmlRewriter.attributes('h2',
+                  (attributes) => attributes['id'] = 'user-content-heading'),
             ],
           );
-      expect(withIds('<h2 id="x">x</h2><h3 id="y">y</h3>'),
-          '<h2 id="heading">x</h2><h3 id="y">y</h3>');
+      expect(withIds('<h2 id="x">x</h2><h3 id="user-content-y">y</h3>'),
+          '<h2 id="user-content-heading">x</h2><h3 id="user-content-y">y</h3>');
+    });
+
+    test('HtmlRewriter.prefixIds prefixes ids and fragments once', () {
+      String s(String html) => sanitizeHtml(
+            html,
+            rewriters: [HtmlRewriter.prefixIds('user-content-')],
+          );
+      expect(
+          s('<h2 id="a">x</h2><a href="#a">y</a><a href="#">z</a>'),
+          '<h2 id="user-content-a">x</h2><a href="#user-content-a">y</a>'
+          '<a href="#">z</a>');
+      expect(s('<h2 id="user-content-a">x</h2><a href="#user-content-a">y</a>'),
+          '<h2 id="user-content-a">x</h2><a href="#user-content-a">y</a>');
+      expect(s('<a name="a" href="/p#a">y</a>'), '<a href="/p#a">y</a>');
+    });
+
+    test('HtmlRewriter.keepTokens filters a token list', () {
+      String s(String html) => sanitizeHtml(
+            html,
+            rules: RuleSet.gfm().union(RuleSet({
+              'span': ElementRule(attributes: {'class': AttributeRule.any()}),
+            })),
+            rewriters: [
+              HtmlRewriter.keepTokens('class', (c) => c.startsWith('ok-')),
+            ],
+          );
+      expect(
+          s('<span class="ok-a bad ok-b">x</span><span class="bad">y</span>'),
+          '<span class="ok-a ok-b">x</span><span>y</span>');
+    });
+
+    test('RuleSet.iframe keeps embeds from the given origin only', () {
+      String s(String html) => sanitizeHtml(
+            html,
+            rules: RuleSet.gfm().union(RuleSet.iframe(
+              where: (src) =>
+                  src.host == 'www.youtube.com' &&
+                  src.path.startsWith('/embed/'),
+              sandbox: 'allow-scripts',
+            )),
+            rewriters: [
+              HtmlRewriter.attributes(
+                  'iframe', (a) => a['sandbox'] = 'allow-scripts'),
+            ],
+          );
+      expect(
+        s('<iframe src="https://www.youtube.com/embed/x" width="560" '
+            'allow="camera" name="n" allowfullscreen></iframe>'),
+        '<iframe src="https://www.youtube.com/embed/x" width="560" '
+        'allowfullscreen="" sandbox="allow-scripts"></iframe>',
+      );
+      expect(
+          s('<iframe src="https://www.youtube.com/watch?v=x"></iframe>a'), 'a');
+      expect(s('<iframe src="https://evil.example/embed/x"></iframe>a'), 'a');
+    });
+
+    test('package:markdown gitHubWeb output survives gfm', () {
+      const source = '''
+# Heading *em* `code`
+
+Para with **strong**, ~~del~~, <https://x.y>, [link](http://a.b "t"),
+![img](http://i.j/k.png "t"), foo[^1], `#ff0000`.
+
+- [ ] task
+- [x] done
+
+3. three
+
+| a | b |
+|:--|--:|
+| 1 | 2 |
+
+```dart title=x
+void main() {}
+```
+
+> [!NOTE]
+> alert
+
+Line  
+break
+
+---
+
+[^1]: note
+''';
+      final rendered = md.markdownToHtml(
+        source,
+        extensionSet: md.ExtensionSet.gitHubWeb,
+      );
+      final sanitized = sanitizeHtml(
+        rendered,
+        rewriters: [HtmlRewriter.prefixIds('user-content-')],
+      );
+      // What the renderer wrote, modulo the writer's normalization, the id
+      // prefix, and the colour chip's inline style (which no checked rule
+      // set can keep).
+      final expected = rendered
+          .replaceAll(' />', '>')
+          .replaceAll('</input>', '')
+          .replaceAll(' id="', ' id="user-content-')
+          .replaceAll(' href="#', ' href="#user-content-')
+          .replaceAll(RegExp(' style="[^"]*"'), '');
+      expect(sanitized, expected);
+      expect(sanitizeHtml(sanitized), sanitized);
+    });
+
+    test('deprecated version 2 parameters still mean the same', () {
+      // ignore: deprecated_member_use_from_same_package
+      String s(String html) => sanitizeHtml(
+            html,
+            // ignore: deprecated_member_use_from_same_package
+            allowElementId: (id) => id.startsWith('ok-'),
+            // ignore: deprecated_member_use_from_same_package
+            allowClassName: (c) => c.startsWith('ok-'),
+            // ignore: deprecated_member_use_from_same_package
+            addLinkRel: (href) => href.startsWith('http') ? ['ugc'] : null,
+          );
+      expect(s('<h2 id="ok-a" class="ok-b bad">x</h2><p id="bad">y</p>'),
+          '<h2 id="ok-a" class="ok-b">x</h2><p>y</p>');
+      expect(s('<a href="https://e.x/">a</a><a href="/b">b</a>'),
+          '<a href="https://e.x/" rel="ugc">a</a><a href="/b">b</a>');
+      expect(
+        // ignore: deprecated_member_use_from_same_package
+        () => sanitizeHtml('x',
+            rules: RuleSet.gfm(), allowClassName: (_) => true),
+        throwsArgumentError,
+      );
+    });
+
+    test('HtmlRewriter.dropElements removes subtrees', () {
+      String s(String html) => sanitizeHtml(
+            html,
+            rewriters: [
+              HtmlRewriter.dropElements({'x', 'br'})
+            ],
+          );
+      expect(s('a<x>b<x>c</x>d</x>e<br>f'), 'aef');
     });
 
     test('HtmlRewriter.addLinkRel merges with existing tokens', () {
@@ -1044,7 +1349,7 @@ void main() {
             sanitize('<a href="javascript:alert(1)">evil</a>'), '<a>evil</a>');
         expect(sanitize('<script>alert("secret")</script>hello'), 'hello');
         expect(sanitize('<div><p>unclosed paragraph'), endsWith('</p></div>'));
-        expect(sanitize('<svg/>x<svg>y</svg>z'), 'xz');
+        expect(sanitize('<svg/>x<svg>y</svg>z'), 'xyz');
       });
 
       test('$name: output re-parses to allowed elements only', () {

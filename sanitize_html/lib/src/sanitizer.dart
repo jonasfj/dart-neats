@@ -17,10 +17,20 @@
 /// Trusted for _completeness_ (every token that reaches the writer went
 /// through the rules), not for what it writes: that is `HtmlWriter`.
 ///
-/// The only state is a counter for the element currently being dropped, so
-/// that `<x><x></x>still dropped</x>` drops the whole subtree. It never
-/// consults a stack of open elements: the browser may close elements where
-/// we did not, so any transformation based on nesting would be a guess.
+/// An element the rules do not keep is _unwrapped_: its tags are dropped
+/// and its content passes through, to be judged on its own. Rules are about
+/// what is safe to keep, not about what the output should look like; a
+/// rewriter can drop whole subtrees beforehand.
+///
+/// Whether an element is kept can depend on its attributes
+/// (`ElementRule.requires`), so the end tag of an unwrapped `<div>` must be
+/// dropped while that of a kept `<div>` is forwarded. The sanitizer keeps a
+/// stack of the start tags it has seen and matches end tags against it the
+/// way `HtmlWriter` does (an end tag closes the nearest open element of its
+/// name; without one it is ignored). The stack is capped like the writer's,
+/// a start tag at the cap replacing the innermost entry, so memory is
+/// bounded and every operation on it is O(cap). A mismatch between this
+/// stack and the writer's only makes output uglier, never unsafe.
 library;
 
 import 'element_rule.dart';
@@ -33,53 +43,47 @@ import 'rule_set.dart';
 HtmlRewriter sanitizer(RuleSet rules) =>
     HtmlRewriter((next) => _Sanitizer(rules, next));
 
+const _maxDepth = 512;
+
 final class _Sanitizer extends HtmlTokenSink {
   final RuleSet _rules;
   final HtmlTokenSink _next;
 
-  /// While dropping an element's content: its name and the number of
-  /// currently open elements with that name.
-  String? _droppedName;
-  int _droppedDepth = 0;
+  /// Open non-void start tags, with whether each was forwarded.
+  final List<(String, bool)> _open = [];
 
   _Sanitizer(this._rules, this._next);
 
   @override
-  void text(String source, int start, int end) {
-    if (_droppedDepth > 0) {
-      return;
-    }
-    _next.text(source, start, end);
-  }
+  void text(String source, int start, int end) =>
+      _next.text(source, start, end);
 
   @override
   void startTag(String name, Map<String, String> attributes) {
-    if (_droppedDepth > 0) {
-      if (name == _droppedName) {
-        _droppedDepth++;
+    final kept = _rules.lookup(name)?.apply(attributes);
+    if (!isVoidElement(name)) {
+      if (_open.length >= _maxDepth) {
+        _open.removeLast();
       }
-      return;
+      _open.add((name, kept != null));
     }
-    final rule = _rules.lookup(name);
-    if (rule == null) {
-      // A void element has no content to drop.
-      if (!isVoidElement(name)) {
-        _droppedName = name;
-        _droppedDepth = 1;
-      }
-      return;
+    if (kept != null) {
+      _next.startTag(name, kept);
     }
-    _next.startTag(name, rule.apply(attributes));
   }
 
   @override
   void endTag(String name) {
-    if (_droppedDepth > 0) {
-      if (name == _droppedName) {
-        _droppedDepth--;
+    for (var i = _open.length - 1; i >= 0; i--) {
+      final (openName, kept) = _open[i];
+      if (openName != name) {
+        continue;
+      }
+      _open.length = i;
+      if (kept) {
+        _next.endTag(name);
       }
       return;
     }
-    _next.endTag(name);
   }
 }

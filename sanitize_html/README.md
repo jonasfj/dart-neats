@@ -18,29 +18,46 @@ void main() {
 }
 ```
 
-By default elements and attributes are filtered in-line with the
-[rules employed by GitHub][1] when sanitizing GFM (GitHub Flavored Markdown).
-This removes all inline JavaScript, CSS, `<form>`, and other elements that
-could be used for XSS. The default rules are stricter than necessary to
-guard against XSS, as they also attempt to prevent the sanitized HTML from
-interfering with the page it is injected into: no `id` or `class` attributes
-unless explicitly allowed, no CSS, no `name` except on `<a>`.
+By default elements and attributes are filtered with `RuleSet.gfm()`: the
+allowlist of [html-pipeline][1], the open-source origin of GitHub's
+Markdown pipeline, plus what [`package:markdown`][2] emits for
+`ExtensionSet.gitHubWeb`. This removes all inline JavaScript, CSS,
+`<form>`, and other elements that could be used for XSS. The rules are
+stricter than XSS alone requires, because sanitized HTML must also not
+interfere with the page it is inserted into: `id` only with the
+`user-content-` prefix, no `name`, `class` only with `markdown-*` tokens
+(and `language-*` on `<code>`), no CSS.
 
 Rules and rewriters are optional parameters:
 
 ```dart
 final safe = sanitizeHtml(
   untrusted,
-  rules: RuleSet.gfm(allowElementId: true),
-  rewriters: [HtmlRewriter.addLinkRel((href) => ['ugc', 'nofollow'])],
+  rewriters: [
+    HtmlRewriter.prefixIds('user-content-'),
+    HtmlRewriter.addLinkRel((href) => ['ugc', 'nofollow']),
+  ],
 );
 ```
+
+Three rule sets are provided:
+
+ * `RuleSet.gfm()` — rendered Markdown, raw HTML included (the default).
+ * `RuleSet.html()` — arbitrary HTML: the element and attribute tables of
+   Google's [safevalues][3] sanitizer, which keeps whatever cannot reach
+   outside the sanitized content. No `id`, `name`, `class`, `<iframe>` or
+   form controls; add what the host can afford with `union`.
+ * `RuleSet.iframe(where: ..., sandbox: ...)` — embeds from chosen origins,
+   to `union` with either.
 
 ## Rules
 
 A `RuleSet` declares which elements are allowed and, for each, which
 attributes and how their values are filtered. Elements without a rule are
-removed together with their content; attributes without a rule are removed.
+_unwrapped_ — their tags go, their content stays and is judged on its own;
+attributes without a rule are removed. Rules decide what is safe to keep,
+not what the output should look like: to remove whole subtrees, run
+`HtmlRewriter.dropElements({...})` before the rules.
 
 ```dart
 final rules = RuleSet.gfm().union(RuleSet({
@@ -57,10 +74,14 @@ final rules = RuleSet.gfm().union(RuleSet({
 
 An `AttributeRule` only ever keeps or drops a value; it never rewrites. So
 `union` keeps what either rule set keeps and `intersection` what both keep,
-with no surprises. Rewriting, such as adding `rel="ugc"` to links, ids to
-headings, or removing all but a few class names, is done by _rewriters_
-(`addLinkRel`, `rewriteAttributes`) which run before the rules and therefore
-cannot add anything the rules would not allow.
+with no surprises. `ElementRule(requires: {...})` keeps an element only if
+the named attributes survive, so `<input>` can be allowed as a checkbox
+only, or `<iframe>` only with an accepted `src`. Rewriting — adding
+`rel="ugc"` to links, prefixing ids, keeping a few class tokens, removing
+subtrees — is done by `HtmlRewriter`s (`addLinkRel`, `prefixIds`,
+`keepTokens`, `dropElements`, `attributes`, or your own `HtmlTokenSink`),
+which run before the rules and therefore cannot add anything the rules
+would not allow.
 
 `RuleSet(...)` refuses grants that defeat the purpose of sanitizing and throws
 `UnsupportedError`: `script`, `style`, `base`, `meta`, `link`, `form`, `svg`,
@@ -135,7 +156,7 @@ The **trusted base** is small and reviewable:
    (policy data, no logic that affects escaping).
 
 Everything else is **untrusted** in the sense that a bug there can make
-output uglier (markup shown as text, content dropped) but never unsafe:
+output uglier (markup shown as text, content lost) but never unsafe:
 
  * `lib/src/tokenizer/`: three interchangeable tokenizers.
    `HtmlTokenizer.streaming` (default) follows the WHATWG tokenizer states
@@ -146,10 +167,10 @@ output uglier (markup shown as text, content dropped) but never unsafe:
    nested input, so prefer the streaming tokenizers for input of unbounded
    size).
  * `lib/src/sanitizer.dart`: applies the rule set; its only state is a
-   counter for the element being dropped.
+   capped stack telling which end tags belong to unwrapped start tags.
  * `lib/src/implied_end_tags.dart`: the tree builder's implied end tags, so
    sloppy input gives tidy output.
- * `lib/src/rewriters.dart`: `rewriteAttributes` and `addLinkRel`.
+ * `lib/src/rewriters.dart`: the built-in `HtmlRewriter`s.
 
 Because the writer escapes attribute values exactly, the URL policy and the
 browser's URL parser see identical strings (up to the HTML parser's
@@ -157,4 +178,6 @@ CR/LF/NUL input preprocessing, which cannot change a verdict); the
 tokenizers' character reference decoding therefore is not security relevant
 either.
 
-[1]: https://github.com/jch/html-pipeline/blob/master/lib/html/pipeline/sanitization_filter.rb
+[1]: https://github.com/gjtorikian/html-pipeline/blob/c99d76dbfe817598387c371af342e25abdccd363/lib/html_pipeline/sanitization_filter.rb
+[2]: https://pub.dev/packages/markdown
+[3]: https://github.com/google/safevalues/blob/main/src/builders/html_sanitizer/sanitizer_table/default_sanitizer_table.ts

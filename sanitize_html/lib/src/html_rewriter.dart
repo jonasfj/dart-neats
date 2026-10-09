@@ -75,6 +75,38 @@ final class HtmlRewriter {
   factory HtmlRewriter.addLinkRel(List<String> Function(String href) rel) =>
       rewriters.addLinkRel(rel);
 
+  /// Prefixes every `id` with [prefix], and every `href` fragment (`#x`)
+  /// to match, leaving values that already have the prefix alone.
+  ///
+  /// Namespaces author ids away from the host page's, as GitHub does with
+  /// `user-content-`: an unprefixed id can shadow a property of `window`
+  /// or `document` or an id the host relies on. `RuleSet.gfm` keeps only
+  /// ids with that prefix.
+  ///
+  /// ```dart
+  /// HtmlRewriter.prefixIds('user-content-')
+  /// ```
+  factory HtmlRewriter.prefixIds(String prefix) => rewriters.prefixIds(prefix);
+
+  /// Keeps only the space-separated tokens of [attribute] for which [where]
+  /// returns `true`, dropping the attribute when none is left.
+  ///
+  /// ```dart
+  /// HtmlRewriter.keepTokens('class', (c) => c.startsWith('language-'))
+  /// ```
+  factory HtmlRewriter.keepTokens(
+    String attribute,
+    bool Function(String token) where,
+  ) =>
+      rewriters.keepTokens(attribute, where);
+
+  /// Drops every element named in [names] together with its content.
+  ///
+  /// The rules only unwrap what they do not keep; use this to remove
+  /// subtrees instead, e.g. `HtmlRewriter.dropElements({'nav', 'aside'})`.
+  factory HtmlRewriter.dropElements(Set<String> names) =>
+      rewriters.dropElements(names);
+
   /// Closes open elements a start tag implicitly ends, as the browser's
   /// tree builder would: `<p>` by block elements, `<li>` by `<li>`, cells
   /// and rows by the next cell or row, headings by headings, `<option>` by
@@ -85,7 +117,7 @@ final class HtmlRewriter {
   factory HtmlRewriter.impliedEndTags() => implied_end_tags.impliedEndTags();
 
   /// Keeps the elements [rules] allow, with their attributes filtered, and
-  /// drops every other element together with its content.
+  /// unwraps every other element: its tags are dropped, its content kept.
   ///
   /// Must be the last rewriter before the `HtmlWriter`: everything before it
   /// is filtered by the rules, everything after it would be trusted.

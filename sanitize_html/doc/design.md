@@ -60,12 +60,12 @@ safety means reviewing these.
 | `lib/src/attribute_rule.dart` | How each `AttributeRule` keeps or drops a value. | It is where the URL policy is actually invoked. A bug here could keep a value the policy rejected. |
 | `lib/src/element_rule.dart`, `lib/src/rule_set.dart` | Which elements have rules, which attributes each keeps, how rule sets combine. | They decide what reaches the writer. |
 | `lib/src/grant_assertions.dart` | What a checked `RuleSet()` refuses to allow. | This is the list that turns "the browser creates nothing extra" into "no script runs". |
-| `lib/src/gfm_rules.dart` | The default allowlists. | Policy data. No logic, but a wrong entry is a wrong default. |
+| `lib/src/gfm_rules.dart`, `lib/src/html_rules.dart`, `lib/src/link_types.dart` | The default allowlists. | Policy data. No logic, but a wrong entry is a wrong default. |
 
 Explicitly **not** trusted, by design:
 
 * `lib/src/tokenizer/*` — three interchangeable tokenizers. Whatever they
-  report, unknown elements are dropped and all text is escaped. They are
+  report, unknown elements are unwrapped and all text is escaped. They are
   reviewed for termination, linear time and fidelity, not for safety. The
   character-reference decoder is in this group too: the writer re-escapes
   attribute values exactly, so the URL policy sees the same string the
@@ -273,13 +273,87 @@ tags — desynchronizes: a swallowed `</p>` can be paid for by a swallowed
 `<b>`, leaving a `</p>` in the output that the browser answers with an empty
 `<p>` nobody pushed.
 
-### RAWTEXT content is dropped
+### Elements the rules do not keep are unwrapped
+
+An element without a rule, or whose `ElementRule.requires` is not met, loses
+its tags and keeps its content, which the rules then judge on its own. This
+is what every Markdown-oriented sanitizer does (html-pipeline, hast,
+ammonia, DOMPurify, bluemonday), and it follows from what rules are for:
+they say what is *safe* to keep, not what the output should *look* like.
+Dropping `<x>a</x>` entirely would make the rule set a styling tool and
+would lose the author's text for no safety gain — the text is escaped
+either way. Callers who want subtrees gone run
+`HtmlRewriter.dropElements({...})` *before* the rules, where a wrong guess
+costs nothing.
+
+Unwrapping has one consequence for the sanitizer: whether an element is
+kept can depend on its attributes (`requires`), so the same name may be kept
+once and unwrapped the next time, and the sanitizer must know which end tag
+belongs to which. It keeps a stack of the start tags it has seen, matching
+end tags against it exactly as the writer does (nearest open element of
+that name, otherwise ignored), capped at 512 like the implied-end-tags
+stack. A disagreement between this stack and the writer's can only misplace
+a closing tag.
+
+### `requires` does not flatten
+
+`ElementRule(requires: {'src', 'sandbox'})` keeps an `<iframe>` only if both
+attributes survive their rules; otherwise the element is unwrapped. Rules
+with requirements cannot be merged into one rule the way attribute rules
+can: a union of "requires `src` and `sandbox`" with "requires `src`" is not
+"requires `src`" — that would keep an element neither rule accepts. So
+`ElementRule` is a sealed type like `AttributeRule`, with private union and
+intersection nodes: a union keeps the element if either rule keeps it, with
+the union of the attributes each would keep; an intersection applies one
+rule and then the other. Rules without requirements still merge into a
+single map, so the common case costs nothing.
+
+### RAWTEXT and template content is dropped
 
 The streaming and simple tokenizers emit no text for the content of `xmp`,
 `textarea`, `title`, `iframe` and the other RAWTEXT/RCDATA elements. Passing
 it through would be wrong: the writer escapes `<` as `&lt;`, and inside
 `<xmp>` a browser does not decode character references, so the reader would
 see a literal `&lt;`. A rule set that allows these elements gets them empty.
+`<template>` content is skipped for a different reason: the browser parses
+it into an inert fragment that never renders, so unwrapping a `<template>`
+must not make its content live.
+
+### The default rule sets are somebody else's opinion
+
+Which elements are *safe* is settled by the writer and the grant
+assertions; which elements a host should *allow* is taste, and this package
+ships as little of its own as it can. Each default rule set is anchored to
+a maintained external document and deviates only where this package's
+checks force it or where the source leaves a check to its callers — and
+every rule carries a comment naming its source.
+
+* `RuleSet.gfm()` is for rendered Markdown: html-pipeline's allowlist (the
+  open-source origin of GitHub's pipeline) plus exactly what
+  `package:markdown` emits for `ExtensionSet.gitHubWeb`. It has no
+  parameters. The attributes a Markdown renderer needs that reach into the
+  host page get the narrowest rule that still serves the renderer: `id`
+  only in the `user-content-` namespace, which GitHub, GitLab and Gitea use
+  for the same reason (an author id can shadow `window.getElementById` or
+  the host's own ids) and which `package:markdown` is expected to emit;
+  `class` only with `markdown-*` tokens, and `language-*` on `<code>`;
+  `name` not at all. `<input>` is allowed only as a checkbox, through
+  `requires`.
+* `RuleSet.html()` is for arbitrary HTML: the tables of Google's
+  safevalues sanitizer, verbatim, because its principle is this package's
+  — keep what cannot reach outside the content — and because it is public
+  and maintained. The deviations are the URL policy, the `rel` allowlist,
+  `target`/`dir`/`loading` as enumerations, and no `<link>` or
+  `formenctype`, all forced by the constructor. Candidates for further
+  deviation (`autofocus`, `download`, `itemref`, `slot`) are marked in the
+  source and left as safevalues has them until decided.
+* `RuleSet.iframe(where:, sandbox:)` exists because "everything except
+  iframes from these origins" is the request every host makes next. It is
+  an overlay for `union`, and `requires` is what makes it possible: an
+  `<iframe>` whose `src` fails the check is unwrapped, not kept empty.
+
+The version 2 parameters survive as deprecated sugar over these pieces, so
+old calls compile and mean the same.
 
 ### One library
 

@@ -20,8 +20,10 @@
 ///
 /// final safe = sanitizeHtml(
 ///   untrusted,
-///   rules: RuleSet.gfm(allowElementId: true),
-///   rewriters: [HtmlRewriter.addLinkRel((href) => ['ugc', 'nofollow'])],
+///   rewriters: [
+///     HtmlRewriter.prefixIds('user-content-'),
+///     HtmlRewriter.addLinkRel((href) => ['ugc', 'nofollow']),
+///   ],
 /// );
 /// ```
 ///

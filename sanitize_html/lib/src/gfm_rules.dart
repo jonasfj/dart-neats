@@ -1,4 +1,4 @@
-// Copyright 2019 Google LLC
+// Copyright 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,38 +12,63 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// # TRUSTED (policy data): the default rules, modelled on GitHub's.
+/// # TRUSTED (policy data): the rules for rendered Markdown.
 ///
-/// Elements and attributes follow the allowlist of [html-pipeline][1], the
-/// sanitizer GitHub applies to rendered Markdown, with these deliberate
-/// differences:
+/// Two sources, each rule annotated with the one it comes from:
 ///
-///  * `name` is only allowed on `<a>`. On `img`, `form`, `embed`, `object`
-///    and `iframe` a `name` creates a [property on `window`][2] and
-///    `document` (DOM clobbering, e.g. `<img name="getElementById">`).
-///  * Form related attributes (`action`, `method`, `enctype`, `accept`,
-///    `accept-charset`, `for`, `prompt`) are dropped since no form element
-///    is allowed, as is `usemap` (no `<map>`) and `accesskey` (hijacks the
-///    host page's keyboard shortcuts).
-///  * `id` and `class` are only kept when the caller asks for them, because
-///    the host page's CSS and scripts select on them.
-///  * `rel` must consist of the [link types][3] the HTML specification
-///    defines for `<a>` (plus `ugc` and `sponsored`), except `opener`, which
-///    re-enables `window.opener` for `target="_blank"` links.
+///  * **html-pipeline** — the allowlist of [`HTMLPipeline::SanitizationFilter`][1]
+///    (v3.2.4), the open-source origin of GitHub's Markdown pipeline. GitHub
+///    no longer uses it, but it is the only published description of the
+///    raw HTML READMEs on GitHub rely on (`<details>`, `<kbd>`, `<img
+///    width align>`, ...).
+///  * **package:markdown** — what [`package:markdown`][2] emits when
+///    rendering with `ExtensionSet.gitHubWeb`: a handful of `class`, `id`
+///    and `data-` attributes html-pipeline would not keep.
+///
+/// Deviations from html-pipeline, each because the attribute reaches
+/// outside the sanitized content (the test applied by Google's
+/// [safevalues][3] sanitizer, which refuses all of them):
+///
+///  * `id` only with the `user-content-` prefix, the namespace GitHub,
+///    GitLab and Gitea put user ids in. An unprefixed id can shadow a
+///    property of `window` or `document` ([DOM clobbering][4]) or an id the
+///    host page relies on. `package:markdown` is expected to emit prefixed
+///    ids; `HtmlRewriter.prefixIds` does it meanwhile.
+///  * `name` is dropped: the same clobbering surface as `id`, and nothing a
+///    Markdown renderer emits.
+///  * `class` only with tokens `package:markdown` emits: `markdown-*`, and
+///    `language-*` on `<code>` (the CommonMark convention for fenced code).
+///    Any other class hooks into the host page's stylesheet.
+///  * Form attributes (`accept`, `accept-charset`, `action`, `enctype`,
+///    `method`, `prompt`, `for`) are dropped: no form element is allowed,
+///    and `for` attaches a label to a host control.
+///  * `accesskey` (hijacks the host's keyboard shortcuts), `tabindex`
+///    (reorders the host's tab sequence), `usemap` (no `<map>`),
+///    `aria-describedby` and `aria-labelledby` (point at host ids).
+///  * `rel` must consist of the [link types][5] defined for `<a>` (plus
+///    `ugc` and `sponsored`), except `opener`, which re-enables
+///    `window.opener` for `target="_blank"` links. html-pipeline keeps any
+///    `rel`.
+///  * `srcset` is parsed and every candidate URL checked; html-pipeline
+///    keeps it unchecked.
 ///
 /// The rule set is built with `RuleSet()`, so it is subject to the same grant
 /// assertions as any user rule set.
 ///
-/// [1]: https://github.com/jch/html-pipeline/blob/master/lib/html/pipeline/sanitization_filter.rb
-/// [2]: https://html.spec.whatwg.org/multipage/nav-history-apis.html#named-access-on-the-window-object
-/// [3]: https://html.spec.whatwg.org/multipage/links.html#linkTypes
+/// [1]: https://github.com/gjtorikian/html-pipeline/blob/c99d76dbfe817598387c371af342e25abdccd363/lib/html_pipeline/sanitization_filter.rb
+/// [2]: https://pub.dev/packages/markdown
+/// [3]: https://github.com/google/safevalues/blob/main/src/builders/html_sanitizer/sanitizer_table/default_sanitizer_table.ts
+/// [4]: https://html.spec.whatwg.org/multipage/nav-history-apis.html#named-access-on-the-window-object
+/// [5]: https://html.spec.whatwg.org/multipage/links.html#linkTypes
 library;
 
 import 'attribute_rule.dart';
-import 'rule_set.dart';
 import 'element_rule.dart';
+import 'link_types.dart';
+import 'rule_set.dart';
 
-const _elements = <String>{
+/// Elements, from html-pipeline unless noted.
+const gfmElements = <String>{
   'a',
   'abbr',
   'b',
@@ -69,11 +94,10 @@ const _elements = <String>{
   'h4',
   'h5',
   'h6',
-  'h7',
-  'h8',
   'hr',
   'i',
   'img',
+  'input', // package:markdown: task list checkboxes
   'ins',
   'kbd',
   'li',
@@ -88,6 +112,7 @@ const _elements = <String>{
   'ruby',
   's',
   'samp',
+  'section', // package:markdown: footnotes
   'small',
   'source',
   'span',
@@ -110,27 +135,25 @@ const _elements = <String>{
   'wbr',
 };
 
-/// Attributes allowed on every element.
-const _globalAttributes = <String, AttributeRule>{
+/// Attributes allowed on every element: html-pipeline's `all:` list minus
+/// the deviations in the library comment, plus `id` and `class` as
+/// `package:markdown` emits them.
+final _globalAttributes = <String, AttributeRule>{
   'abbr': AttributeRule.any(),
   'align': AttributeRule.any(),
   'alt': AttributeRule.any(),
-  'aria-describedby': AttributeRule.any(),
   'aria-hidden': AttributeRule.any(),
   'aria-label': AttributeRule.any(),
-  'aria-labelledby': AttributeRule.any(),
   'axis': AttributeRule.any(),
   'border': AttributeRule.any(),
-  'cellpadding': AttributeRule.any(),
-  'cellspacing': AttributeRule.any(),
   'char': AttributeRule.any(),
   'charoff': AttributeRule.any(),
   'charset': AttributeRule.any(),
   'checked': AttributeRule.any(),
+  'class': AttributeRule.where(_isMarkdownClassList),
   'clear': AttributeRule.any(),
   'cols': AttributeRule.any(),
   'colspan': AttributeRule.any(),
-  'color': AttributeRule.any(),
   'compact': AttributeRule.any(),
   'coords': AttributeRule.any(),
   'datetime': AttributeRule.any(),
@@ -141,6 +164,7 @@ const _globalAttributes = <String, AttributeRule>{
   'height': AttributeRule.any(),
   'hreflang': AttributeRule.any(),
   'hspace': AttributeRule.any(),
+  'id': AttributeRule.where(_isUserContentId),
   'ismap': AttributeRule.any(),
   'itemprop': AttributeRule.any(),
   'label': AttributeRule.any(),
@@ -152,8 +176,9 @@ const _globalAttributes = <String, AttributeRule>{
   'noshade': AttributeRule.any(),
   'nowrap': AttributeRule.any(),
   'open': AttributeRule.any(),
+  'progress': AttributeRule.any(),
   'readonly': AttributeRule.any(),
-  'rel': AttributeRule.where(_isRelList),
+  'rel': AttributeRule.where(isAnchorRelList),
   'rev': AttributeRule.any(),
   'role': AttributeRule.any(),
   'rows': AttributeRule.any(),
@@ -166,89 +191,87 @@ const _globalAttributes = <String, AttributeRule>{
   'span': AttributeRule.any(),
   'start': AttributeRule.any(),
   'summary': AttributeRule.any(),
-  'tabindex': AttributeRule.any(),
-  'target': AttributeRule.any(),
   'title': AttributeRule.any(),
   'type': AttributeRule.any(),
   'valign': AttributeRule.any(),
   'value': AttributeRule.any(),
-  'vspace': AttributeRule.any(),
   'width': AttributeRule.any(),
 };
 
 /// Attributes allowed on specific elements, in addition to the global ones.
-const _elementAttributes = <String, Map<String, AttributeRule>>{
-  'a': {'href': AttributeRule.url(), 'name': AttributeRule.any()},
-  'blockquote': {'cite': AttributeRule.url()},
-  'del': {'cite': AttributeRule.url()},
-  'div': {'itemscope': AttributeRule.any(), 'itemtype': AttributeRule.any()},
+final _elementAttributes = <String, Map<String, AttributeRule>>{
+  'a': {'href': AttributeRule.url()}, // html-pipeline
+  'blockquote': {'cite': AttributeRule.url()}, // html-pipeline
+  'code': {
+    // package:markdown: `language-<info>` on fenced code blocks.
+    'class': AttributeRule.where(_isCodeClassList),
+  },
+  'del': {'cite': AttributeRule.url()}, // html-pipeline
+  'div': {
+    'itemscope': AttributeRule.any(), // html-pipeline
+    'itemtype': AttributeRule.any(), // html-pipeline
+  },
   'img': {
-    'longdesc': AttributeRule.url(),
-    'src': AttributeRule.url(),
+    'loading': AttributeRule.any(), // html-pipeline
+    'longdesc': AttributeRule.url(), // html-pipeline
+    'src': AttributeRule.url(), // html-pipeline
+    // sanitize_html 2.2.0; checked like `<source srcset>`.
     'srcset': AttributeRule.srcset(),
   },
-  'ins': {'cite': AttributeRule.url()},
-  'q': {'cite': AttributeRule.url()},
-  'source': {'srcset': AttributeRule.srcset()},
+  'ins': {'cite': AttributeRule.url()}, // html-pipeline
+  'pre': {
+    // package:markdown: the info string after the language.
+    'data-metadata': AttributeRule.any(),
+  },
+  'q': {'cite': AttributeRule.url()}, // html-pipeline
+  'source': {'srcset': AttributeRule.srcset()}, // html-pipeline
 };
 
-/// [Link types][1] for `<a>`, without `opener`.
-///
-/// [1]: https://html.spec.whatwg.org/multipage/links.html#linkTypes
-const _relTokens = <String>{
-  'alternate',
-  'author',
-  'bookmark',
-  'external',
-  'help',
-  'license',
-  'me',
-  'next',
-  'nofollow',
-  'noopener',
-  'noreferrer',
-  'prev',
-  'privacy-policy',
-  'search',
-  'sponsored',
-  'tag',
-  'terms-of-service',
-  'ugc',
+/// `package:markdown` task lists: `<input type="checkbox" checked>`. Any
+/// other `<input>` is unwrapped. A checkbox without a `name` is never
+/// submitted with a host form; `disabled` keeps it from being toggled.
+final _input = ElementRule(
+  requires: {'type'},
+  attributes: {
+    ..._globalAttributes,
+    'type': AttributeRule.where((value) => value == 'checkbox'),
+  },
+);
+
+/// Class names `package:markdown` emits that do not yet carry the
+/// `markdown-` prefix.
+// TODO: Remove once package:markdown emits `markdown-*` names.
+const _legacyMarkdownClasses = <String>{
+  'contains-task-list',
+  'footnote-backref',
+  'footnote-ref',
+  'footnotes',
+  'gfm-color_chip',
+  'task-list-item',
 };
 
-bool _isRelList(String value) {
-  final tokens = value.split(_asciiWhitespace).where((t) => t.isNotEmpty);
-  return tokens.isNotEmpty && tokens.every(_relTokens.contains);
-}
+bool _isMarkdownClassList(String value) => everyToken(value, _isMarkdownClass);
 
-final _asciiWhitespace = RegExp(r'[ \t\n\f\r]+');
+bool _isCodeClassList(String value) => everyToken(
+      value,
+      (token) => token.startsWith('language-') || _isMarkdownClass(token),
+    );
 
-/// The rule set without `id` and `class`, shared by all default callers.
-final _defaultRuleSet = _build(const {});
+bool _isMarkdownClass(String token) =>
+    token.startsWith('markdown-') || _legacyMarkdownClasses.contains(token);
+
+bool _isUserContentId(String value) => value.startsWith('user-content-');
 
 /// See `RuleSet.gfm`.
-RuleSet gfmRuleSet({
-  required bool allowElementId,
-  required bool allowClassName,
-}) {
-  if (!allowElementId && !allowClassName) {
-    return _defaultRuleSet;
-  }
-  return _build({
-    if (allowElementId) 'id': AttributeRule.any(),
-    if (allowClassName) 'class': AttributeRule.any(),
-  });
-}
-
-RuleSet _build(Map<String, AttributeRule> extraGlobals) {
-  final global = {..._globalAttributes, ...extraGlobals};
-  return RuleSet({
-    for (final element in _elements)
-      element: ElementRule(
-        attributes: switch (_elementAttributes[element]) {
-          null => global,
-          final specific => {...global, ...specific},
-        },
-      ),
-  });
-}
+final gfmRuleSet = RuleSet({
+  for (final element in gfmElements)
+    element: switch (element) {
+      'input' => _input,
+      _ => ElementRule(
+          attributes: switch (_elementAttributes[element]) {
+            null => _globalAttributes,
+            final specific => {..._globalAttributes, ...specific},
+          },
+        ),
+    },
+});

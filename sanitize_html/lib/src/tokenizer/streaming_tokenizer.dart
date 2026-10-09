@@ -18,7 +18,10 @@
 /// RAWTEXT / RCDATA elements, script data escaping and `plaintext` without
 /// building a tree. Content of RAWTEXT, RCDATA and script elements is not
 /// reported: it is never rendered as markup, and `iframe` content, the only
-/// such element a rule set can allow, is never rendered at all.
+/// such element a rule set can allow, is never rendered at all. `template`
+/// content is skipped the same way: the browser parses it into an inert
+/// fragment that never renders, so unwrapping a `<template>` must not make
+/// its content live.
 ///
 /// Known deviations, all affecting fidelity only:
 ///
@@ -47,6 +50,7 @@ const _rawTextElements = <String>{
   'noframes',
   'noscript',
   'style',
+  'template',
   'textarea',
   'title',
   'xmp',

@@ -15,6 +15,9 @@
 /// Assembles tokenizer, rewriters and writer into [sanitizeHtml].
 library;
 
+import 'attribute_rule.dart';
+import 'element_rule.dart';
+import 'gfm_rules.dart' show gfmElements;
 import 'html_rewriter.dart';
 import 'html_token_sink.dart';
 import 'html_tokenizer.dart';
@@ -26,7 +29,7 @@ import 'rule_set.dart';
 /// Returns HTML containing only the elements and attributes [rules] allow
 /// (by default [RuleSet.gfm], modelled on how GitHub sanitizes rendered
 /// Markdown), with text and attribute values escaped. Elements that are not
-/// allowed are removed together with their content.
+/// allowed are unwrapped: their tags are removed, their content is kept.
 ///
 /// ```dart
 /// print(sanitizeHtml('<a href="javascript:alert();">evil link</a>'));
@@ -34,8 +37,10 @@ import 'rule_set.dart';
 ///
 /// final safe = sanitizeHtml(
 ///   untrusted,
-///   rules: RuleSet.gfm(allowElementId: true),
-///   rewriters: [HtmlRewriter.addLinkRel((href) => ['ugc', 'nofollow'])],
+///   rewriters: [
+///     HtmlRewriter.prefixIds('user-content-'),
+///     HtmlRewriter.addLinkRel((href) => ['ugc', 'nofollow']),
+///   ],
 /// );
 /// ```
 ///
@@ -51,15 +56,51 @@ import 'rule_set.dart';
 /// `<textarea>`, `<title>`, `<svg>`, `<math>` or XML documents.
 ///
 /// The sanitizer prevents script execution and limits the ways content can
-/// interfere with the host page (no `id` or `class` unless allowed, no CSS,
-/// no forms, no `name` except on `<a>`). It does not protect against content
-/// that is merely misleading, such as links to malicious sites.
+/// interfere with the host page (no unprefixed `id`, no `name`, no `class`
+/// outside `markdown-*`, no CSS, no forms). It does not protect against
+/// content that is merely misleading, such as links to malicious sites.
+///
+/// [allowElementId], [allowClassName] and [addLinkRel] are the parameters
+/// of version 2, kept so that existing calls compile and mean the same:
+/// `id`s and `class` tokens are kept when the callback returns `true`, and
+/// `rel` tokens added to links with an `href`. They cannot be combined with
+/// [rules] or [rewriters]. Migrate to `RuleSet.gfm().union(...)`,
+/// [HtmlRewriter.keepTokens] and [HtmlRewriter.addLinkRel].
 String sanitizeHtml(
   String html, {
   RuleSet? rules,
   List<HtmlRewriter> rewriters = const [],
   HtmlTokenizer tokenizer = HtmlTokenizer.streaming,
+  @Deprecated('Use rules: RuleSet.gfm().union(...) and '
+      'rewriters: [HtmlRewriter.keepTokens(\'id\', ...)]')
+  bool Function(String id)? allowElementId,
+  @Deprecated('Use rules: RuleSet.gfm().union(...) and '
+      'rewriters: [HtmlRewriter.keepTokens(\'class\', ...)]')
+  bool Function(String className)? allowClassName,
+  @Deprecated('Use rewriters: [HtmlRewriter.addLinkRel(...)]')
+  Iterable<String>? Function(String href)? addLinkRel,
 }) {
+  if (allowElementId != null || allowClassName != null || addLinkRel != null) {
+    if (rules != null || rewriters.isNotEmpty) {
+      throw ArgumentError(
+        'allowElementId, allowClassName and addLinkRel cannot be combined '
+        'with rules or rewriters',
+      );
+    }
+    rules = _legacyRules(
+      id: allowElementId != null,
+      className: allowClassName != null,
+    );
+    rewriters = [
+      if (allowElementId != null) HtmlRewriter.keepTokens('id', allowElementId),
+      if (allowClassName != null)
+        HtmlRewriter.keepTokens('class', allowClassName),
+      if (addLinkRel != null)
+        HtmlRewriter.addLinkRel(
+          (href) => addLinkRel(href)?.toList() ?? const [],
+        ),
+    ];
+  }
   final writer = HtmlWriter();
   HtmlTokenSink sink =
       HtmlRewriter.sanitizer(rules ?? RuleSet.gfm()).bind(writer);
@@ -69,3 +110,19 @@ String sanitizeHtml(
   tokenizer.tokenize(html, HtmlRewriter.impliedEndTags().bind(sink));
   return writer.finish();
 }
+
+final _legacyRuleSets = <(bool, bool), RuleSet>{};
+
+/// [RuleSet.gfm] with any `id` and/or `class` allowed on every element, as
+/// version 2 allowed them before its callbacks filtered the values.
+RuleSet _legacyRules({required bool id, required bool className}) =>
+    _legacyRuleSets.putIfAbsent(
+      (id, className),
+      () => RuleSet.gfm().union(RuleSet({
+        for (final element in gfmElements)
+          element: ElementRule(attributes: {
+            if (id) 'id': const AttributeRule.any(),
+            if (className) 'class': const AttributeRule.any(),
+          }),
+      })),
+    );

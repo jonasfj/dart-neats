@@ -23,7 +23,7 @@ Future<void> main(List<String> args) async {
   final testData = await File(testFile.toFilePath()).readAsString();
   final html = markdownToHtml(testData);
 
-  final rules = RuleSet.gfm(allowClassName: true, allowElementId: true);
+  final rules = RuleSet.gfm();
   String streaming(String html) =>
       sanitizeHtml(html, rules: rules, tokenizer: HtmlTokenizer.streaming);
   String simple(String html) =>

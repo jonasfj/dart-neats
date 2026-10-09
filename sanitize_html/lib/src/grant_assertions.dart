@@ -27,7 +27,6 @@
 library;
 
 import 'attribute_rule.dart';
-import 'element_rule.dart';
 
 /// Elements a checked rule set may not allow.
 ///
@@ -142,16 +141,16 @@ const urlAttributes = <String>{
   'xlink:href',
 };
 
-/// Throws [UnsupportedError] if [rule] for [tagName] grants something a
-/// checked rule set refuses.
-void checkGrants(String tagName, ElementRule rule) {
+/// Throws [UnsupportedError] if [attributes] of a rule for [tagName] grant
+/// something a checked rule set refuses.
+void checkGrants(String tagName, Map<String, AttributeRule> attributes) {
   if (forbiddenElements.contains(tagName)) {
     throw UnsupportedError(
       '<$tagName> cannot be allowed by RuleSet(); '
       'use RuleSet.unsafe() if you really mean it',
     );
   }
-  for (final MapEntry(key: name, value: rule) in rule.attributes.entries) {
+  for (final MapEntry(key: name, value: rule) in attributes.entries) {
     if (forbiddenAttributes.contains(name) || name.startsWith('on')) {
       throw UnsupportedError(
         '<$tagName $name=""> cannot be allowed by RuleSet(); '

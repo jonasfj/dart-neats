@@ -3,16 +3,36 @@
    only by a small, audited writer (`HtmlWriter`) that emits balanced
    lower-case tags, always double-quoted and escaped attribute values, and
    escaped text. See the README for the guarantee and what is trusted.
- * **Breaking:** `sanitizeHtml` now only takes `html` and an optional `rules`.
-   The `allowElements`, `allowElementId`, `allowClassName` and `addLinkRel`
-   parameters are gone; use `sanitizeHtml(html, rules: RuleSet.gfm(
-   allowElementId: true), rewriters: [HtmlRewriter.addLinkRel(...)])`. `RuleSet.gfm`
-   allows or drops `id` and `class` wholesale; limit their values with a
-   rewriter.
+ * **Breaking:** elements the rules do not allow are _unwrapped_ (tags
+   removed, content kept) instead of removed with their content, as other
+   Markdown sanitizers do. `HtmlRewriter.dropElements({...})` removes
+   subtrees. Content of `script`, `style`, `template` and the other
+   RAWTEXT/RCDATA elements is still never kept.
+ * Added `ElementRule(requires: {...})`: the element is kept only if the
+   named attributes are present and pass their rules, e.g. an `<input>` only
+   with `type="checkbox"` or an `<iframe>` only with an allowed `src`.
+ * **Breaking:** `sanitizeHtml` takes `rules`, `rewriters` and `tokenizer`.
+   The version 2 parameters `allowElementId`, `allowClassName` and
+   `addLinkRel` still work but are deprecated and cannot be combined with
+   `rules` or `rewriters`; `allowElements` is gone (use
+   `RuleSet.gfm().union(RuleSet({...}))`).
  * Added `RuleSet`, `ElementRule` and `AttributeRule` (`any`, `url([where])`,
    `srcset([where])`, `where`) for declaring which elements and attributes are
-   kept, with `RuleSet.gfm()`, `union` and `intersection`. Attribute rules
-   only keep or drop values, never rewrite them.
+   kept, with `union` and `intersection`. Attribute rules only keep or drop
+   values, never rewrite them.
+ * **Breaking:** `RuleSet.gfm()` takes no parameters and follows html-pipeline
+   v3 plus what `package:markdown` emits for `ExtensionSet.gitHubWeb`: `id`
+   only with the `user-content-` prefix (GitHub's namespace for author ids;
+   `HtmlRewriter.prefixIds` adds it, and `package:markdown` is expected to
+   emit it), `class` only with `markdown-*` tokens (plus the names
+   `package:markdown` emits today) and `language-*` on `<code>`,
+   `data-metadata` on `<pre>`, `<input type="checkbox">`, `<section>`;
+   `name`, `target`, `accesskey`, `tabindex`, `aria-describedby`,
+   `aria-labelledby`, `color`, `vspace`, `cellpadding`, `cellspacing`,
+   `h7` and `h8` are no longer kept; `img[loading]` is.
+ * Added `RuleSet.html()`, the element and attribute tables of Google's
+   safevalues sanitizer with this package's URL and `rel` checks, and
+   `RuleSet.iframe(where:, sandbox:)` for embeds from chosen origins.
  * `RuleSet(...)` throws `UnsupportedError` for grants that defeat the purpose
    of sanitizing (elements `script`, `style`, `base`, `meta`, `link`, `html`,
    `head`, `body`, `frameset`, `frame`, `form`, `object`, `embed`, `applet`,
@@ -22,8 +42,9 @@
    attributes not bound to `AttributeRule.url` / `srcset`) and
    `ArgumentError` for names the writer cannot write (`'DIV'`, `'a b'`,
    `'image'`). `RuleSet.unsafe(...)` waives the `UnsupportedError`s.
- * Added `HtmlRewriter` with `attributes` and `addLinkRel` rewriters, which
-   run before the rules are applied, and a constructor for custom rewriters.
+ * Added `HtmlRewriter` with `attributes`, `addLinkRel`, `prefixIds`,
+   `keepTokens` and `dropElements` rewriters, which run before the rules are
+   applied, and a constructor for custom rewriters.
  * Added the pipeline building blocks `HtmlTokenSink`, `HtmlTokenizer` and
    `HtmlWriter` (with `HtmlRewriter.sanitizer` and
    `HtmlRewriter.impliedEndTags`) and three interchangeable tokenizers
