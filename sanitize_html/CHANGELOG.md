@@ -8,9 +8,11 @@
    Markdown sanitizers do. `HtmlRewriter.dropElements({...})` removes
    subtrees. Content of `script`, `style`, `template` and the other
    RAWTEXT/RCDATA elements is still never kept.
- * Added `ElementRule(requires: {...})`: the element is kept only if the
-   named attributes are present and pass their rules, e.g. an `<input>` only
-   with `type="checkbox"` or an `<iframe>` only with an allowed `src`.
+ * Added `ElementPattern` and `RuleSet(..., exemptions: [...])`: exact forms
+   of an element kept as exemptions from the rules, e.g. an `<input>` only
+   with `type="checkbox"` or an `<iframe>` only from one origin and
+   sandboxed. Patterns are tried first and never merged; `intersection`
+   keeps only exemptions present in both rule sets.
  * **Breaking:** `sanitizeHtml` takes `rules`, `rewriters` and `tokenizer`.
    The version 2 parameters `allowElementId`, `allowClassName` and
    `addLinkRel` still work but are deprecated and cannot be combined with
@@ -32,7 +34,8 @@
    `h7` and `h8` are no longer kept; `img[loading]` is.
  * Added `RuleSet.html()`, the element and attribute tables of Google's
    safevalues sanitizer with this package's URL and `rel` checks, and
-   `RuleSet.iframe(where:, sandbox:)` for embeds from chosen origins.
+   `ElementPattern.iframe(where:, sandbox:)` and `ElementPattern.checkbox`
+   as ready-made exemptions, and `RuleSet.withExemptions`.
  * `RuleSet(...)` throws `UnsupportedError` for grants that defeat the purpose
    of sanitizing (elements `script`, `style`, `base`, `meta`, `link`, `html`,
    `head`, `body`, `frameset`, `frame`, `form`, `object`, `embed`, `applet`,

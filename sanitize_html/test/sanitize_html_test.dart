@@ -402,6 +402,9 @@ void main() {
           '<h2 id="ok-a" class="ok-b">x</h2><p>y</p>');
       expect(s('<a href="https://e.x/">a</a><a href="/b">b</a>'),
           '<a href="https://e.x/" rel="ugc">a</a><a href="/b">b</a>');
+      // The checkbox exemption keeps them too.
+      expect(s('<input type="checkbox" id="ok-c" class="ok-d bad">'),
+          '<input type="checkbox" id="ok-c" class="ok-d">');
       expect(
         // ignore: deprecated_member_use_from_same_package
         () => sanitizeHtml('x',

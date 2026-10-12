@@ -22,9 +22,10 @@
 /// what is safe to keep, not about what the output should look like; a
 /// rewriter can drop whole subtrees beforehand.
 ///
-/// Whether an element is kept can depend on its attributes
-/// (`ElementRule.requires`), so the end tag of an unwrapped `<div>` must be
-/// dropped while that of a kept `<div>` is forwarded. The sanitizer keeps a
+/// Whether an element is kept can depend on its attributes (an
+/// `ElementPattern` may be the only thing allowing it), so the end tag of an
+/// unwrapped `<div>` must be dropped while that of a kept `<div>` is
+/// forwarded. The sanitizer keeps a
 /// stack of the start tags it has seen and matches end tags against it the
 /// way `HtmlWriter` does (an end tag closes the nearest open element of its
 /// name; without one it is ignored). The stack is capped at the writer's
@@ -33,7 +34,6 @@
 /// stack and the writer's only makes output uglier, never unsafe.
 library;
 
-import 'element_rule.dart';
 import 'html_rewriter.dart';
 import 'html_token_sink.dart';
 import 'html_writer.dart' show isVoidElement, maxDepth;
@@ -58,7 +58,7 @@ final class _Sanitizer extends HtmlTokenSink {
 
   @override
   void startTag(String name, Map<String, String> attributes) {
-    final kept = _rules.lookup(name)?.apply(attributes);
+    final kept = _rules.apply(name, attributes);
     if (!isVoidElement(name)) {
       if (_open.length >= maxDepth) {
         _open.removeLast();

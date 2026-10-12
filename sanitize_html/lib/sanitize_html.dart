@@ -52,6 +52,7 @@ export 'src/attribute_rule.dart' show AttributeRule;
 export 'src/html_sanitizer.dart' show sanitizeHtml;
 export 'src/html_rewriter.dart' show HtmlRewriter;
 export 'src/rule_set.dart' show RuleSet;
+export 'src/element_pattern.dart' show ElementPattern;
 export 'src/element_rule.dart' show ElementRule;
 export 'src/html_token_sink.dart' show HtmlTokenSink;
 export 'src/html_tokenizer.dart' show HtmlTokenizer;

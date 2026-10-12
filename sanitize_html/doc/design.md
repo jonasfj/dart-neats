@@ -288,8 +288,8 @@ tags — desynchronizes: a swallowed `</p>` can be paid for by a swallowed
 
 ### Elements the rules do not keep are unwrapped
 
-An element without a rule, or whose `ElementRule.requires` is not met, loses
-its tags and keeps its content, which the rules then judge on its own. This
+An element without a rule or matching pattern loses its tags and keeps its
+content, which the rules then judge on its own. This
 is what every Markdown-oriented sanitizer does (html-pipeline, hast,
 ammonia, DOMPurify, bluemonday), and it follows from what rules are for:
 they say what is *safe* to keep, not what the output should *look* like.
@@ -300,26 +300,64 @@ either way. Callers who want subtrees gone run
 costs nothing.
 
 Unwrapping has one consequence for the sanitizer: whether an element is
-kept can depend on its attributes (`requires`), so the same name may be kept
-once and unwrapped the next time, and the sanitizer must know which end tag
+kept can depend on its attributes (a pattern may be the only thing allowing
+it), so the same name may be kept once and unwrapped the next time, and the sanitizer must know which end tag
 belongs to which. It keeps a stack of the start tags it has seen, matching
 end tags against it exactly as the writer does (nearest open element of
 that name, otherwise ignored), capped at 512 like the implied-end-tags
 stack. A disagreement between this stack and the writer's can only misplace
 a closing tag.
 
-### `requires` does not flatten
+### Rules filter attributes; patterns are exemptions
 
-`ElementRule(requires: {'src', 'sandbox'})` keeps an `<iframe>` only if both
-attributes survive their rules; otherwise the element is unwrapped. Rules
-with requirements cannot be merged into one rule the way attribute rules
-can: a union of "requires `src` and `sandbox`" with "requires `src`" is not
-"requires `src`" — that would keep an element neither rule accepts. So
-`ElementRule` is a sealed type like `AttributeRule`, with private union and
-intersection nodes: a union keeps the element if either rule keeps it, with
-the union of the attributes each would keep; an intersection applies one
-rule and then the other. Rules without requirements still merge into a
-single map, so the common case costs nothing.
+An `ElementRule` decides each attribute on its own and always keeps the
+element. That independence is what makes rule sets compose: a union keeps an
+attribute if either rule keeps it, an intersection if both do, and nothing
+else needs saying. (The union is a hull — `<b title lang>` survives a union
+of "`b` with `title`" and "`b` with `lang`" although neither alone would
+keep both — and that is the behaviour wanted: *allow what either allows*,
+per attribute.)
+
+"An `<iframe>` only from this origin and only sandboxed" is not a
+per-attribute decision, and every attempt to express it inside a rule —
+a required-attribute set, a required flag per attribute, a predicate over
+the attribute map — broke composition the same way: after a union the
+requirement was judged against the *merged* rule for `src`, so a frame
+from the other side's origin satisfied it. Requirements and per-attribute
+merging do not mix.
+
+So exact forms are a separate thing, an `ElementPattern`: a tag name, the
+attributes that must be present and pass, and the attributes kept if
+present. A pattern is judged on the element as written with its own rules,
+and it is never merged. A rule set holds, per tag, one rule and an ordered
+list of patterns; the first matching pattern decides, otherwise the rule.
+Composition follows:
+
+* `union` ORs the rules per attribute and concatenates the pattern lists,
+  this rule set's first. Order only decides which of two matching patterns
+  speaks — a small price for having no merge at all.
+* `intersection` ANDs the rules and keeps only the exemptions present in
+  *both* rule sets (same object, or same tag and attribute names bound to
+  the same `AttributeRule` objects — never a comparison of closures), in
+  this side's order. Every other exemption disappears, whatever the rules
+  say. This is the honest definition, not a compromise: an exemption is an
+  exception to *these* rules; rules compose, exceptions do not. Two rule
+  sets derived from the same default share its exemptions by identity, so
+  `(gfm ∪ X) ∩ (gfm ∪ Y)` keeps the checkbox; anything else is added back
+  with `withExemptions`. The alternatives were tried and rejected:
+  narrowing one side's pattern by the other side's rule is sound only when
+  the other side has no pattern for that element, and conjoining two
+  patterns is unsound under first-match precedence — which pattern speaks
+  for an element depends on the element, so no flat list reproduces "what
+  both would do" (shown by brute force over small universes).
+
+For rule sets without patterns, intersection is the same as sanitizing with
+one and then the other. With patterns it is not: the pipeline lets the
+second rule set strip an attribute the first one's match depended on (an
+empty `<iframe>` from a YouTube frame), while the intersection only keeps
+forms both accept. Both are expressible — the pipeline as two
+`HtmlRewriter.sanitizer`s in a row — and the one called `intersection` is
+the symmetric one.
 
 ### RAWTEXT and template content is dropped
 
@@ -350,8 +388,8 @@ every rule carries a comment naming its source.
   for the same reason (an author id can shadow `window.getElementById` or
   the host's own ids) and which `package:markdown` is expected to emit;
   `class` only with `markdown-*` tokens, and `language-*` on `<code>`;
-  `name` not at all. `<input>` is allowed only as a checkbox, through
-  `requires`.
+  `name` not at all. `<input>` is allowed only as a checkbox, through a
+  pattern.
 * `RuleSet.html()` is for arbitrary HTML: the tables of Google's
   safevalues sanitizer, verbatim, because its principle is this package's
   — keep what cannot reach outside the content — and because it is public
@@ -360,10 +398,10 @@ every rule carries a comment naming its source.
   `formenctype`, all forced by the constructor. Candidates for further
   deviation (`autofocus`, `download`, `itemref`, `slot`) are marked in the
   source and left as safevalues has them until decided.
-* `RuleSet.iframe(where:, sandbox:)` exists because "everything except
-  iframes from these origins" is the request every host makes next. It is
-  an overlay for `union`, and `requires` is what makes it possible: an
-  `<iframe>` whose `src` fails the check is unwrapped, not kept empty.
+* `ElementPattern.iframe(where:, sandbox:)` exists because "everything
+  except iframes from these origins" is the request every host makes next,
+  and `ElementPattern.checkbox` because it is the one `<input>` form that
+  can do nothing. Both are patterns to add with `withExemptions`.
 
 The version 2 parameters survive as deprecated sugar over these pieces, so
 old calls compile and mean the same.

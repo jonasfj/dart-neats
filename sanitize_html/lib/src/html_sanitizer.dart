@@ -17,7 +17,7 @@ library;
 
 import 'attribute_rule.dart';
 import 'element_rule.dart';
-import 'rules/gfm.dart' show gfmElements;
+import 'rules/gfm.dart' show gfmCheckbox, gfmElements;
 import 'html_rewriter.dart';
 import 'html_token_sink.dart';
 import 'html_tokenizer.dart';
@@ -115,14 +115,18 @@ final _legacyRuleSets = <(bool, bool), RuleSet>{};
 
 /// [RuleSet.gfm] with any `id` and/or `class` allowed on every element, as
 /// version 2 allowed them before its callbacks filtered the values.
+///
+/// The checkbox exemption comes first so that it, too, keeps them.
 RuleSet _legacyRules({required bool id, required bool className}) =>
-    _legacyRuleSets.putIfAbsent(
-      (id, className),
-      () => RuleSet.gfm().union(RuleSet({
-        for (final element in gfmElements)
-          element: ElementRule(attributes: {
-            if (id) 'id': const AttributeRule.any(),
-            if (className) 'class': const AttributeRule.any(),
-          }),
-      })),
-    );
+    _legacyRuleSets.putIfAbsent((id, className), () {
+      final extra = <String, AttributeRule>{
+        if (id) 'id': const AttributeRule.any(),
+        if (className) 'class': const AttributeRule.any(),
+      };
+      return RuleSet(const {}, exemptions: [gfmCheckbox(extra)])
+          .union(RuleSet.gfm())
+          .union(RuleSet({
+            for (final element in gfmElements)
+              element: ElementRule(attributes: extra),
+          }));
+    });

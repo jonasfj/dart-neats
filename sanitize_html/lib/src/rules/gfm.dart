@@ -63,6 +63,7 @@
 library;
 
 import '../attribute_rule.dart';
+import '../element_pattern.dart';
 import '../element_rule.dart';
 import '../util/space_separated_tokens.dart';
 import 'link_types.dart';
@@ -231,13 +232,14 @@ final _elementAttributes = <String, Map<String, AttributeRule>>{
 /// `package:markdown` task lists: `<input type="checkbox" checked>`. Any
 /// other `<input>` is unwrapped. A checkbox without a `name` is never
 /// submitted with a host form; `disabled` keeps it from being toggled.
-final _input = ElementRule(
-  requires: {'type'},
-  attributes: {
-    ..._globalAttributes,
-    'type': AttributeRule.where((value) => value == 'checkbox'),
-  },
-);
+ElementPattern gfmCheckbox([
+  Map<String, AttributeRule> extraAttributes = const {},
+]) =>
+    ElementPattern(
+      'input',
+      match: {'type': AttributeRule.where((value) => value == 'checkbox')},
+      attributes: {..._globalAttributes, ...extraAttributes}..remove('type'),
+    );
 
 /// Class names `package:markdown` emits that do not yet carry the
 /// `markdown-` prefix.
@@ -266,13 +268,17 @@ bool _isUserContentId(String value) => value.startsWith('user-content-');
 /// See `RuleSet.gfm`.
 final gfmRuleSet = RuleSet({
   for (final element in gfmElements)
-    element: switch (element) {
-      'input' => _input,
-      _ => ElementRule(
-          attributes: switch (_elementAttributes[element]) {
-            null => _globalAttributes,
-            final specific => {..._globalAttributes, ...specific},
-          },
-        ),
-    },
-});
+    if (element != 'input')
+      element: ElementRule(
+        attributes: switch (_elementAttributes[element]) {
+          null => _globalAttributes,
+          final specific => {..._globalAttributes, ...specific},
+        },
+      ),
+}, exemptions: [
+  _checkbox,
+]);
+
+/// One instance, so that rule sets derived from [gfmRuleSet] share it and
+/// `RuleSet.intersection` keeps it.
+final _checkbox = gfmCheckbox();

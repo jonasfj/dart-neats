@@ -47,8 +47,9 @@ Three rule sets are provided:
    Google's [safevalues][3] sanitizer, which keeps whatever cannot reach
    outside the sanitized content. No `id`, `name`, `class`, `<iframe>` or
    form controls; add what the host can afford with `union`.
- * `RuleSet.iframe(where: ..., sandbox: ...)` — embeds from chosen origins,
-   to `union` with either.
+ * `ElementPattern.iframe(where: ..., sandbox: ...)` and
+   `ElementPattern.checkbox` — exemptions to add to either with
+   `withExemptions`.
 
 ## Rules
 
@@ -74,9 +75,10 @@ final rules = RuleSet.gfm().union(RuleSet({
 
 An `AttributeRule` only ever keeps or drops a value; it never rewrites. So
 `union` keeps what either rule set keeps and `intersection` what both keep,
-with no surprises. `ElementRule(requires: {...})` keeps an element only if
-the named attributes survive, so `<input>` can be allowed as a checkbox
-only, or `<iframe>` only with an accepted `src`. Rewriting — adding
+with no surprises. Where an element is acceptable only in one exact form —
+`<input>` as a checkbox, `<iframe>` from one origin and sandboxed — an
+`ElementPattern` names that form as an exemption: judged on the element as
+written, tried before the rule, never merged with anything. Rewriting — adding
 `rel="ugc"` to links, prefixing ids, keeping a few class tokens, removing
 subtrees — is done by `HtmlRewriter`s (`addLinkRel`, `prefixIds`,
 `keepTokens`, `dropElements`, `attributes`, or your own `HtmlTokenSink`),
