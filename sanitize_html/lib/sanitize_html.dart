@@ -49,7 +49,7 @@
 library;
 
 export 'src/attribute_rule.dart' show AttributeRule;
-export 'src/html_sanitizer.dart' show sanitizeHtml;
+export 'src/sanitize_html.dart' show sanitizeHtml;
 export 'src/html_rewriter.dart' show HtmlRewriter;
 export 'src/rule_set.dart' show RuleSet;
 export 'src/element_pattern.dart' show ElementPattern;

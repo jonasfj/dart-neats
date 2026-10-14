@@ -28,7 +28,10 @@
 /// forwarded. The sanitizer keeps a
 /// stack of the start tags it has seen and matches end tags against it the
 /// way `HtmlWriter` does (an end tag closes the nearest open element of its
-/// name; without one it is ignored). The stack is capped at the writer's
+/// name; without one it is ignored). Closing a kept element pops everything
+/// above it, as the writer will; closing an unwrapped one pops only itself,
+/// since the writer has nothing to close and the kept elements above it
+/// stay open in both stacks. The stack is capped at the writer's
 /// `maxDepth`, a start tag at the cap replacing the innermost entry, so
 /// memory is bounded and every operation on it is O(cap). A mismatch between this
 /// stack and the writer's only makes output uglier, never unsafe.
@@ -77,9 +80,13 @@ final class _Sanitizer extends HtmlTokenSink {
       if (openName != name) {
         continue;
       }
-      _open.length = i;
       if (kept) {
+        // The writer closes this element and everything above it.
+        _open.length = i;
         _next.endTag(name);
+      } else {
+        // The writer never saw this element, so nothing above it closes.
+        _open.removeAt(i);
       }
       return;
     }

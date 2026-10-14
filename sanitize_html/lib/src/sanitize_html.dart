@@ -71,8 +71,8 @@ String sanitizeHtml(
   RuleSet? rules,
   List<HtmlRewriter> rewriters = const [],
   HtmlTokenizer tokenizer = HtmlTokenizer.streaming,
-  @Deprecated('Use rules: RuleSet.gfm().union(...) and '
-      'rewriters: [HtmlRewriter.keepTokens(\'id\', ...)]')
+  @Deprecated('Use rewriters: [HtmlRewriter.prefixIds(\'user-content-\')], '
+      'or rules: RuleSet.gfm().union(...) with HtmlRewriter.keepTokens')
   bool Function(String id)? allowElementId,
   @Deprecated('Use rules: RuleSet.gfm().union(...) and '
       'rewriters: [HtmlRewriter.keepTokens(\'class\', ...)]')
@@ -127,6 +127,6 @@ RuleSet _legacyRules({required bool id, required bool className}) =>
           .union(RuleSet.gfm())
           .union(RuleSet({
             for (final element in gfmElements)
-              element: ElementRule(attributes: extra),
+              if (element != 'input') element: ElementRule(attributes: extra),
           }));
     });

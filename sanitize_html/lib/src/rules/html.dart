@@ -18,13 +18,14 @@
 /// Google's safe HTML types, copied verbatim: it is maintained, published,
 /// and already applies the test this package applies — keep what cannot
 /// reach outside the sanitized content — so no element is allowed or
-/// dropped on this package's own authority. Each deviation below is forced
-/// by the checked `RuleSet()` constructor or by a check safevalues leaves
-/// to its callers:
+/// dropped on this package's own authority, with one opinion stated last.
+/// Each deviation below is forced by the checked `RuleSet()` constructor or
+/// by a check safevalues leaves to its callers:
 ///
 ///  * `<link>` is not allowed: the constructor refuses it (`rel=stylesheet`
-///    loads CSS, `rel=preload` fetches on the host's behalf). Likewise
-///    `formenctype`, and with it `enctype`: no form element is allowed.
+///    loads CSS, `rel=preload` fetches on the host's behalf), as it does
+///    `formenctype`. `enctype` goes with it: no form element is allowed, so
+///    it could do nothing.
 ///  * URL attributes (`href`, `src`, `srcset`, `poster`, `cite`) go through
 ///    this package's URL policy; safevalues does not check resource URLs.
 ///  * `rel` only with the link types defined for `<a>`, never `opener`;
@@ -37,6 +38,34 @@
 /// shadow properties of `window` and `document` or ids the host relies on,
 /// classes hook into the host's stylesheet. Add them with `union` where
 /// the host can afford it.
+///
+/// The one opinion of this package's own: seven things safevalues keeps
+/// are dropped because each binds the content to something the host owns —
+/// its focus, its URLs, its shadow tree, its ids or its form — rather than
+/// composing with it the way embedded HTML does (a heading joins the host's
+/// outline, an `itemprop` joins an enclosing item, a `<select>` appears in
+/// an enclosing form: those are kept). It is the test safevalues itself
+/// applies to `<label>`, `<iframe>`, `<title>` and `tabindex`, carried to
+/// the end of its table:
+///
+///  * `autofocus`: moves focus, and scrolls, to the content on load — the
+///    same page-global state as `tabindex`, which safevalues denies.
+///  * `download`: turns a link to the host's own origin into a file
+///    download — the one host-navigation modifier left after `target`,
+///    `ping` and `rel=opener`.
+///  * `itemref` and `usemap`: references by id or name into the host
+///    document — the two safevalues' identifier rule missed. With `id` and
+///    `name` denied, a content `usemap` can only bind to a host image map.
+///  * `required`: with no form allowed it does nothing in the content, but a
+///    content `<select required>` inside a host form blocks the host's
+///    submission — meaningless for the reason safevalues denies form
+///    controls, and not harmless.
+///  * `slot` and `<slot>`: inert outside a shadow tree; inside a shadow root
+///    the host created, the attribute moves content into the host's slots
+///    and the element captures the host's own children. The one call with no
+///    safevalues precedent.
+///
+/// Hosts that want any of them add it back with `union`.
 ///
 /// [1]: https://github.com/google/safevalues/blob/main/src/builders/html_sanitizer/sanitizer_table/default_sanitizer_table.ts
 library;
@@ -57,7 +86,7 @@ const _elements = <String>{
   'del', 'picture', 'param', 'track', 'map', 'table', 'caption', 'colgroup',
   'col', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'select', 'datalist',
   'optgroup', 'option', 'output', 'progress', 'meter', 'fieldset', 'legend',
-  'details', 'summary', 'menu', 'dialog', 'slot', 'canvas', 'font', 'center',
+  'details', 'summary', 'menu', 'dialog', 'canvas', 'font', 'center',
   'acronym', 'basefont', 'big', 'dir', 'hgroup', 'strike', 'tt',
   // safevalues `ELEMENT_POLICIES`, without `link`.
   'a', 'area', 'source', 'img', 'video', 'audio',
@@ -66,36 +95,102 @@ const _elements = <String>{
 /// safevalues `ALLOWED_GLOBAL_ATTRIBUTES` and `GLOBAL_ATTRIBUTE_POLICIES`.
 final _globalAttributes = <String, AttributeRule>{
   for (final name in const [
-    'title', 'aria-atomic', 'aria-autocomplete', 'aria-busy', 'aria-checked',
-    'aria-current', 'aria-disabled', 'aria-dropeffect', 'aria-expanded',
-    'aria-haspopup', 'aria-hidden', 'aria-invalid', 'aria-label',
-    'aria-level', 'aria-live', 'aria-multiline', 'aria-multiselectable',
-    'aria-orientation', 'aria-posinset', 'aria-pressed', 'aria-readonly',
-    'aria-relevant', 'aria-required', 'aria-selected', 'aria-setsize',
-    'aria-sort', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow',
-    'aria-valuetext', 'alt', 'align', 'autocapitalize', 'autocomplete',
+    'title',
+    'aria-atomic',
+    'aria-autocomplete',
+    'aria-busy',
+    'aria-checked',
+    'aria-current',
+    'aria-disabled',
+    'aria-dropeffect',
+    'aria-expanded',
+    'aria-haspopup',
+    'aria-hidden',
+    'aria-invalid',
+    'aria-label',
+    'aria-level',
+    'aria-live',
+    'aria-multiline',
+    'aria-multiselectable',
+    'aria-orientation',
+    'aria-posinset',
+    'aria-pressed',
+    'aria-readonly',
+    'aria-relevant',
+    'aria-required',
+    'aria-selected',
+    'aria-setsize',
+    'aria-sort',
+    'aria-valuemax',
+    'aria-valuemin',
+    'aria-valuenow',
+    'aria-valuetext',
+    'alt',
+    'align',
+    'autocapitalize',
+    'autocomplete',
     'autocorrect',
-    // TODO: `autofocus` steals focus from the host page on load. safevalues
-    // keeps it; decide whether to deviate.
-    'autofocus', 'autoplay', 'bgcolor', 'border', 'cellpadding',
-    'cellspacing', 'checked', 'color', 'cols', 'colspan', 'controls',
-    'controlslist', 'coords', 'crossorigin', 'datetime', 'disabled',
-    // TODO: `download` turns a same-origin link into a file download.
-    // safevalues keeps it; decide whether to deviate.
-    'download', 'draggable', 'face', 'frameborder',
-    'height', 'hreflang', 'hidden', 'inert', 'ismap', 'label', 'lang', 'loop',
-    'max', 'maxlength', 'media', 'minlength', 'min', 'multiple', 'muted',
-    'nonce', 'open', 'playsinline', 'placeholder', 'preload', 'required',
-    'reversed', 'role', 'rows', 'rowspan', 'selected', 'shape', 'size',
+    'autoplay',
+    'bgcolor',
+    'border',
+    'cellpadding',
+    'cellspacing',
+    'checked',
+    'color',
+    'cols',
+    'colspan',
+    'controls',
+    'controlslist',
+    'coords',
+    'crossorigin',
+    'datetime',
+    'disabled',
+    'draggable',
+    'face',
+    'frameborder',
+    'height',
+    'hreflang',
+    'hidden',
+    'inert',
+    'ismap',
+    'label',
+    'lang',
+    'loop',
+    'max',
+    'maxlength',
+    'media',
+    'minlength',
+    'min',
+    'multiple',
+    'muted',
+    'nonce',
+    'open',
+    'playsinline',
+    'placeholder',
+    'preload',
+    'reversed',
+    'role',
+    'rows',
+    'rowspan',
+    'selected',
+    'shape',
+    'size',
     'sizes',
-    // TODO: `slot` only matters inside a shadow root the host created;
-    // safevalues keeps it. Decide whether to deviate.
-    'slot', 'span', 'spellcheck', 'start', 'step', 'summary', 'translate',
-    'type', 'usemap', 'valign', 'value', 'width', 'wrap', 'itemscope',
-    'itemtype', 'itemid', 'itemprop',
-    // TODO: `itemref` points at ids anywhere in the host document;
-    // safevalues keeps it. Decide whether to deviate.
-    'itemref',
+    'span',
+    'spellcheck',
+    'start',
+    'step',
+    'summary',
+    'translate',
+    'type',
+    'valign',
+    'value',
+    'width',
+    'wrap',
+    'itemscope',
+    'itemtype',
+    'itemid',
+    'itemprop',
   ])
     name: const AttributeRule.any(),
   'cite': const AttributeRule.url(), // URL policy

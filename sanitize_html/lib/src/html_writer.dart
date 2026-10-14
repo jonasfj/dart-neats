@@ -72,8 +72,11 @@
 ///    cap counts the host document's depth too; it only flattens, it never
 ///    creates elements, so where it applies is irrelevant here.)
 ///
-/// The tree builder may still re-nest elements or insert implied `tbody`,
-/// `tr`, `colgroup` and `p` elements; those carry no attributes and are not
+/// The tree builder may still re-nest elements, insert implied `tbody`,
+/// `tr`, `colgroup` and `p` elements, or clone a misnested formatting
+/// element (`a`, `b`, `nobr`, ...) with the same name and attributes; the
+/// implied ones carry no attributes and the clones only repeat an element
+/// that was pushed, so none of them is
 /// attacker-controlled.
 ///
 /// [1]: https://html.spec.whatwg.org/multipage/parsing.html#data-state

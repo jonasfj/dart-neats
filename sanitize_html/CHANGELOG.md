@@ -11,8 +11,7 @@
  * Added `ElementPattern` and `RuleSet(..., exemptions: [...])`: exact forms
    of an element kept as exemptions from the rules, e.g. an `<input>` only
    with `type="checkbox"` or an `<iframe>` only from one origin and
-   sandboxed. Patterns are tried first and never merged; `intersection`
-   keeps only exemptions present in both rule sets.
+   sandboxed. Patterns are tried first and never merged.
  * **Breaking:** `sanitizeHtml` takes `rules`, `rewriters` and `tokenizer`.
    The version 2 parameters `allowElementId`, `allowClassName` and
    `addLinkRel` still work but are deprecated and cannot be combined with
@@ -20,8 +19,8 @@
    `RuleSet.gfm().union(RuleSet({...}))`).
  * Added `RuleSet`, `ElementRule` and `AttributeRule` (`any`, `url([where])`,
    `srcset([where])`, `where`) for declaring which elements and attributes are
-   kept, with `union` and `intersection`. Attribute rules only keep or drop
-   values, never rewrite them.
+   kept, with `union`, `without` and `restrict`. Attribute rules only keep
+   or drop values, never rewrite them.
  * **Breaking:** `RuleSet.gfm()` takes no parameters and follows html-pipeline
    v3 plus what `package:markdown` emits for `ExtensionSet.gitHubWeb`: `id`
    only with the `user-content-` prefix (GitHub's namespace for author ids;
@@ -35,7 +34,10 @@
  * Added `RuleSet.html()`, the element and attribute tables of Google's
    safevalues sanitizer with this package's URL and `rel` checks, and
    `ElementPattern.iframe(where:, sandbox:)` and `ElementPattern.checkbox`
-   as ready-made exemptions, and `RuleSet.withExemptions`.
+   as ready-made exemptions, and `RuleSet.withExemptions`. `RuleSet.html()`
+   drops `autofocus`, `download`, `itemref`, `usemap`, `required`, `slot`
+   and `<slot>`, which safevalues keeps, because each binds the content to
+   something the host page owns.
  * `RuleSet(...)` throws `UnsupportedError` for grants that defeat the purpose
    of sanitizing (elements `script`, `style`, `base`, `meta`, `link`, `html`,
    `head`, `body`, `frameset`, `frame`, `form`, `object`, `embed`, `applet`,

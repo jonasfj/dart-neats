@@ -24,13 +24,24 @@ library;
 import 'package:html/dom.dart';
 import 'package:html/parser.dart' show parseFragment;
 
+import 'streaming_tokenizer.dart';
+
 import '../html_token_sink.dart';
 import 'elements.dart';
 
 /// See `HtmlTokenizer.dom`.
 void tokenizeDom(String html, HtmlTokenSink sink) {
   // Iterative walk; each frame is a node and the index of the next child.
-  final stack = <(Node, int)>[(parseFragment(html), 0)];
+  final DocumentFragment fragment;
+  try {
+    fragment = parseFragment(html);
+  } on FormatException {
+    // package:html throws on numeric character references beyond 2^63
+    // (`&#9223372036854775808;`); the streaming tokenizer handles them.
+    tokenizeStreaming(html, sink);
+    return;
+  }
+  final stack = <(Node, int)>[(fragment, 0)];
   while (stack.isNotEmpty) {
     final (node, index) = stack.removeLast();
     if (index < node.nodes.length) {

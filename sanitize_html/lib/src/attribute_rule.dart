@@ -16,7 +16,7 @@
 ///
 /// An [AttributeRule] decides whether an attribute value is kept or dropped;
 /// it never rewrites a value. Rewriting belongs in an `HtmlRewriter` that runs
-/// before the sanitizer, see `rewriters.dart`. Because rules only keep or
+/// before the sanitizer, see `html_rewriter.dart`. Because rules only keep or
 /// drop, combining them is set algebra: a union keeps what either rule
 /// keeps, an intersection what both keep, and a URL check can never be
 /// followed by something that changes the URL.

@@ -15,9 +15,9 @@
 /// # TRUSTED: which attributes an allowed element keeps.
 ///
 /// Each attribute is decided on its own, so combining rules is per-attribute
-/// set algebra: a union keeps an attribute if either rule keeps it, an
-/// intersection if both do. Decisions that depend on several attributes at
-/// once belong in an `ElementPattern`.
+/// set algebra: a union keeps an attribute if either rule keeps it, a
+/// restriction only if both do. Decisions that depend on several attributes
+/// at once belong in an `ElementPattern`.
 library;
 
 import 'attribute_rule.dart';
@@ -66,12 +66,5 @@ extension ElementRuleExtension on ElementRule {
             null => rule,
             final mine => mine.union(rule),
           },
-      });
-
-  /// A rule keeping attributes kept by both this rule and [other].
-  ElementRule intersection(ElementRule other) => ElementRule(attributes: {
-        for (final MapEntry(key: name, value: rule) in _attributes.entries)
-          if (other._attributes[name] case final theirs?)
-            name: rule.intersection(theirs),
       });
 }

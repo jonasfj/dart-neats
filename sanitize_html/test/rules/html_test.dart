@@ -40,6 +40,13 @@ void main() {
       expect(s('<bdo dir="rtl">a</bdo><bdo dir="foo">b</bdo>'),
           '<bdo dir="rtl">a</bdo><bdo>b</bdo>');
       expect(s('<q cite="data:x">a</q>'), '<q>a</q>');
+      // The seven things dropped on this package's own authority.
+      expect(
+          s('<select required autofocus><option>x</option></select>'
+              '<a href="/f" download>d</a><img src="/i" usemap="#m">'
+              '<slot>s</slot><span slot="n" itemref="i">t</span>'),
+          '<select><option>x</option></select><a href="/f">d</a>'
+          '<img src="/i">s<span>t</span>');
     });
   });
 }

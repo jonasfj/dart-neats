@@ -80,9 +80,10 @@ Explicitly **not** trusted, by design:
   splitter. Pure functions used by trusted and untrusted code alike; small
   enough to read in a minute.
 
-Tests mirror this layout: `test/<file>_test.dart` for each top-level
-library, `test/rules/`, `test/rewriters/` and `test/tokenizer/` for the
-folders, `test/third_party_cases_test.dart` for cases borrowed from
+Tests mirror this layout: `test/rules/`, `test/rewriters/` and
+`test/tokenizer/` for the folders, `test/{sanitize_html,rule_set,
+html_writer,url_policy}_test.dart` for the libraries with behaviour of
+their own, `test/third_party_cases_test.dart` for cases borrowed from
 DOMPurify, html5lib, parse5 and Bleach, and `test/helpers.dart` for the
 shared `configured` pipeline and `testContains`/`testNotContains`.
 
@@ -141,8 +142,8 @@ not even by removing tokens from a `class` list. That makes a rule a plain
 predicate on values, and combining rule sets is set algebra:
 
 * `a.union(b)` keeps what either keeps — `a(v) || b(v)`;
-* `a.intersection(b)` keeps what both keep — `a(v) && b(v)`, which is the
-  same as sanitizing with `a` and then with `b`.
+* `a.restrict(element, b)` keeps what both keep — `a(v) && b(v)`, which is
+  the same as sanitizing with `a` and then with `b`.
 
 Neither needs a special case, and a URL check can never be followed by
 something that alters the URL it checked. A rule that removed tokens from a
@@ -304,9 +305,11 @@ kept can depend on its attributes (a pattern may be the only thing allowing
 it), so the same name may be kept once and unwrapped the next time, and the sanitizer must know which end tag
 belongs to which. It keeps a stack of the start tags it has seen, matching
 end tags against it exactly as the writer does (nearest open element of
-that name, otherwise ignored), capped at 512 like the implied-end-tags
-stack. A disagreement between this stack and the writer's can only misplace
-a closing tag.
+that name, otherwise ignored), capped at the writer's depth. Closing a
+kept element pops everything above it, as it does in the writer; closing
+an unwrapped element pops only itself, since the writer has nothing to
+close. A disagreement between this stack and the writer's can only
+misplace a closing tag.
 
 ### Rules filter attributes; patterns are exemptions
 
@@ -336,28 +339,26 @@ Composition follows:
 * `union` ORs the rules per attribute and concatenates the pattern lists,
   this rule set's first. Order only decides which of two matching patterns
   speaks — a small price for having no merge at all.
-* `intersection` ANDs the rules and keeps only the exemptions present in
-  *both* rule sets (same object, or same tag and attribute names bound to
-  the same `AttributeRule` objects — never a comparison of closures), in
-  this side's order. Every other exemption disappears, whatever the rules
-  say. This is the honest definition, not a compromise: an exemption is an
-  exception to *these* rules; rules compose, exceptions do not. Two rule
-  sets derived from the same default share its exemptions by identity, so
-  `(gfm ∪ X) ∩ (gfm ∪ Y)` keeps the checkbox; anything else is added back
-  with `withExemptions`. The alternatives were tried and rejected:
-  narrowing one side's pattern by the other side's rule is sound only when
-  the other side has no pattern for that element, and conjoining two
-  patterns is unsound under first-match precedence — which pattern speaks
-  for an element depends on the element, so no flat list reproduces "what
-  both would do" (shown by brute force over small universes).
+* `without(elements)` removes an element's rule and its exemptions. An
+  exemption is an exception to the rules for its element; without the
+  element there is nothing to except.
+* `restrict(element, rule)` ANDs the named attributes of one element's rule
+  and leaves everything else — other attributes, other elements, all
+  exemptions — as it is. It can only narrow, so the call site says what it
+  does.
 
-For rule sets without patterns, intersection is the same as sanitizing with
-one and then the other. With patterns it is not: the pipeline lets the
-second rule set strip an attribute the first one's match depended on (an
-empty `<iframe>` from a YouTube frame), while the intersection only keeps
-forms both accept. Both are expressible — the pipeline as two
-`HtmlRewriter.sanitizer`s in a row — and the one called `intersection` is
-the symmetric one.
+There is no `intersection` of two rule sets. Every narrowing anyone asks
+for is "this default minus a few elements" or "this attribute, tighter";
+an intersection with a hand-written rule set would mean re-listing every
+element to keep, and the intersection of two full rule sets (`gfm` with
+`html`, say) is a set nobody wants. Capping one rule set by another is the
+pipeline, and is spelled as such: `HtmlRewriter.sanitizer(a)` followed by
+`HtmlRewriter.sanitizer(b)`. Exemptions do not survive any of this on
+their own merits — `union` carries them, `without` drops them with their
+element, `restrict` ignores them — because they do not compose: an
+exemption is an exception to *these* rules, and there is no principled
+exception to a combination of rule sets that is not simply one of the
+originals.
 
 ### RAWTEXT and template content is dropped
 
@@ -395,9 +396,15 @@ every rule carries a comment naming its source.
   — keep what cannot reach outside the content — and because it is public
   and maintained. The deviations are the URL policy, the `rel` allowlist,
   `target`/`dir`/`loading` as enumerations, and no `<link>` or
-  `formenctype`, all forced by the constructor. Candidates for further
-  deviation (`autofocus`, `download`, `itemref`, `slot`) are marked in the
-  source and left as safevalues has them until decided.
+  `formenctype`, all forced by the constructor — plus one opinion of this
+  package's own, applied to the end of safevalues' table rather than
+  invented: seven things that bind the content to something the host owns
+  (`autofocus` to its focus, `download` to its navigation, `itemref` and
+  `usemap` to its ids, `required` to its form, `slot` and `<slot>` to its
+  shadow tree) are dropped, with the reason for each in the source. Content
+  that composes with the host by nesting — a heading in its outline, an
+  `itemprop` in an enclosing item, a `<select>` in an enclosing form — is
+  what embedding HTML means, and is kept.
 * `ElementPattern.iframe(where:, sandbox:)` exists because "everything
   except iframes from these origins" is the request every host makes next,
   and `ElementPattern.checkbox` because it is the one `<input>` form that
@@ -408,9 +415,10 @@ old calls compile and mean the same.
 
 ### One library
 
-`package:sanitize_html/sanitize_html.dart` exports eight names. Five are the
+`package:sanitize_html/sanitize_html.dart` exports nine names. Six are the
 API for someone sanitizing Markdown output: `sanitizeHtml`, `RuleSet`,
-`ElementRule`, `AttributeRule`, `HtmlRewriter`. Three are the pipeline parts
+`ElementRule`, `ElementPattern`, `AttributeRule`, `HtmlRewriter`. Three are
+the pipeline parts
 for custom pipelines: `HtmlTokenizer`, `HtmlTokenSink`, `HtmlWriter`; together
 with `HtmlRewriter.sanitizer` and `HtmlRewriter.impliedEndTags` they are
 enough to assemble `sanitizeHtml` by hand.

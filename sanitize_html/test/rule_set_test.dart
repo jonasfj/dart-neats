@@ -99,23 +99,44 @@ void main() {
       });
     });
 
-    test('grant assertions survive union and intersection', () {
+    test('grant assertions survive union, without and restrict', () {
       final checked = RuleSet({
         'a': ElementRule(attributes: {'href': AttributeRule.url()})
       });
       final unsafe = RuleSet.unsafe({
         'a': ElementRule(attributes: {'href': AttributeRule.any()})
       });
-      // Intersection with anything keeps the URL policy; union with an
+      // Restricting with anything keeps the URL policy; a union with an
       // unsafe set is unsafe.
       expect(
           sanitizeHtml('<a href="javascript:alert(1)">x</a>',
-              rules: checked.intersection(unsafe)),
+              rules: checked.restrict(
+                  'a', ElementRule(attributes: {'href': AttributeRule.any()}))),
           '<a>x</a>');
       expect(
           sanitizeHtml('<a href="javascript:alert(1)">x</a>',
               rules: checked.union(unsafe)),
           '<a href="javascript:alert(1)">x</a>');
+      expect(
+          sanitizeHtml('<a href="javascript:alert(1)">x</a>',
+              rules: checked.union(unsafe).without({'a'})),
+          'x');
+    });
+
+    test('rule sets do not alias the caller\'s maps', () {
+      final attributes = <String, AttributeRule>{'title': AttributeRule.any()};
+      final match = <String, AttributeRule>{'type': AttributeRule.any()};
+      final rules = RuleSet({
+        'b': ElementRule(attributes: attributes)
+      }, exemptions: [
+        ElementPattern('input', match: match),
+      ]);
+      attributes['onclick'] = AttributeRule.any();
+      match['onclick'] = AttributeRule.any();
+      expect(sanitizeHtml('<b onclick="x" title="t">y</b>', rules: rules),
+          '<b title="t">y</b>');
+      expect(sanitizeHtml('<input type="t" onclick="x">', rules: rules),
+          '<input type="t">');
     });
 
     test('unsafe rule sets really are unsafe, but still well-formed', () {
@@ -212,24 +233,47 @@ void main() {
       expect(s('<b title="c" lang="en">x</b>'), '<b lang="en">x</b>');
     });
 
-    test('intersection keeps only what both allow', () {
-      final a = RuleSet({
-        'b': ElementRule(attributes: {
-          'title': AttributeRule.where((v) => v.startsWith('a')),
-          'lang': AttributeRule.any(),
-        }),
-        'i': const ElementRule(),
-      });
-      final b = RuleSet({
-        'b': ElementRule(attributes: {
-          'title': AttributeRule.where((v) => v.endsWith('b')),
-        }),
-        'u': const ElementRule(),
-      });
-      String s(String html) => sanitizeHtml(html, rules: a.intersection(b));
-      expect(s('<i>x</i><u>y</u><b>z</b>'), 'xy<b>z</b>');
-      expect(s('<b title="ab" lang="en">x</b>'), '<b title="ab">x</b>');
-      expect(s('<b title="a">x</b>'), '<b>x</b>');
+    test('without removes elements, rule and exemptions alike', () {
+      String s(String html) =>
+          sanitizeHtml(html, rules: RuleSet.gfm().without({'img', 'input'}));
+      expect(s('<p><img src="/x" alt="a">b</p>'), '<p>b</p>');
+      expect(s('<input type="checkbox">c'), 'c');
+      expect(s('<b>d</b>'), '<b>d</b>');
+      // Removing what is not there is nothing.
+      expect(sanitizeHtml('<b>d</b>', rules: RuleSet.gfm().without({'nope'})),
+          '<b>d</b>');
+    });
+
+    test('restrict narrows named attributes and leaves the rest alone', () {
+      final rules = RuleSet.gfm().restrict(
+          'a',
+          ElementRule(attributes: {
+            'href': AttributeRule.url((u) => u.host == 'pub.dev'),
+          }));
+      String s(String html) => sanitizeHtml(html, rules: rules);
+      expect(s('<a href="https://pub.dev/x" title="t" rel="nofollow">y</a>'),
+          '<a href="https://pub.dev/x" title="t" rel="nofollow">y</a>');
+      expect(s('<a href="https://evil.example/" title="t">y</a>'),
+          '<a title="t">y</a>');
+      // Other elements and exemptions are untouched.
+      expect(s('<input type="checkbox"><b title="t">z</b>'),
+          '<input type="checkbox"><b title="t">z</b>');
+      // AND with never removes an attribute.
+      expect(
+          sanitizeHtml('<b title="t">z</b>',
+              rules: RuleSet.gfm().restrict(
+                  'b',
+                  ElementRule(attributes: {
+                    'title': AttributeRule.where((_) => false)
+                  }))),
+          '<b>z</b>');
+      expect(() => RuleSet.gfm().restrict('iframe', const ElementRule()),
+          throwsArgumentError);
+      // A restriction can only narrow: unknown names are a mistake.
+      expect(
+          () => RuleSet.gfm().restrict(
+              'b', ElementRule(attributes: {'nope': AttributeRule.any()})),
+          throwsArgumentError);
     });
 
     test('elements without a rule are unwrapped, not dropped', () {
@@ -239,6 +283,16 @@ void main() {
           sanitizeHtml('<script>a</script><style>b</style><template>c'
               '</template><textarea>d</textarea>'),
           '');
+    });
+
+    test('closing an unwrapped element leaves kept elements above it open', () {
+      for (final tokenizer in [HtmlTokenizer.streaming, HtmlTokenizer.simple]) {
+        String s(String html) => sanitizeHtml(html, tokenizer: tokenizer);
+        expect(s('<x><a href="https://e.x/">link</x> text</a><p>more</p>'),
+            '<a href="https://e.x/">link text</a><p>more</p>');
+        expect(s('<x><div>in</x>after</div><p>more</p>'),
+            '<div>inafter</div><p>more</p>');
+      }
     });
 
     test('a pattern keeps an exact form, judged on the element as written', () {
@@ -340,72 +394,6 @@ void main() {
         expect(s('<iframe src="https://a.example/" sandbox="allow-scripts">'),
             '<iframe src="https://a.example/" sandbox="allow-scripts"></iframe>');
       }
-    });
-
-    test('intersection keeps only exemptions present in both', () {
-      final youtube = ElementPattern.iframe(
-          where: (u) => u.host == 'www.youtube.com', sandbox: 'allow-scripts');
-      final gist =
-          ElementPattern.iframe(where: (u) => u.host == 'gist.github.com');
-      final a = RuleSet({
-        'iframe': ElementRule(attributes: {'width': AttributeRule.any()}),
-      }, exemptions: [
-        youtube,
-        gist
-      ]);
-      final b = RuleSet({
-        'iframe': ElementRule(attributes: {
-          'width': AttributeRule.any(),
-          'height': AttributeRule.any(),
-        }),
-      }, exemptions: [
-        gist
-      ]);
-      const frame = '<iframe src="https://www.youtube.com/embed/x" '
-          'sandbox="allow-scripts" width="1" height="2"></iframe>';
-      for (final rules in [a.intersection(b), b.intersection(a)]) {
-        String s(String html) => sanitizeHtml(html, rules: rules);
-        // Only a had the YouTube exemption: gone, whatever the rules say.
-        expect(s(frame), '<iframe width="1"></iframe>');
-        // Both had the gist exemption (the same object): kept.
-        expect(s('<iframe src="https://gist.github.com/x" sandbox="">'),
-            '<iframe src="https://gist.github.com/x" sandbox=""></iframe>');
-      }
-      // ... which differs from sanitizing with a and then with b: a keeps
-      // the frame through its exemption, b then strips what its rule does
-      // not allow.
-      expect(
-          sanitizeHtml(frame, rewriters: [HtmlRewriter.sanitizer(a)], rules: b),
-          '<iframe width="1" height="2"></iframe>');
-      // An exemption on one side only, for an element the other side has no
-      // rule for, is gone with the element.
-      expect(
-          sanitizeHtml('<input type="checkbox">x',
-              rules: RuleSet.gfm().intersection(RuleSet.html())),
-          'x');
-      // Rule sets derived from the same default share its exemptions.
-      expect(
-          sanitizeHtml('<input type="checkbox">x',
-              rules:
-                  RuleSet.gfm().union(a).intersection(RuleSet.gfm().union(b))),
-          '<input type="checkbox">x');
-    });
-
-    test('exemptions are equal by tag, names and identical rules', () {
-      const any = AttributeRule.any();
-      expect(ElementPattern('b', match: {'title': any}),
-          ElementPattern('b', match: {'title': any}));
-      expect(ElementPattern('b', match: {'title': any}),
-          isNot(ElementPattern('i', match: {'title': any})));
-      expect(ElementPattern('b', match: {'title': any}),
-          isNot(ElementPattern('b', match: {}, attributes: {'title': any})));
-      // Separately built closures are different rules.
-      expect(
-          ElementPattern('b',
-              match: {'title': AttributeRule.where((v) => true)}),
-          isNot(ElementPattern('b',
-              match: {'title': AttributeRule.where((v) => true)})));
-      expect(ElementPattern.checkbox, ElementPattern.checkbox);
     });
 
     test('withExemptions adds exemptions after the rule set\'s own', () {

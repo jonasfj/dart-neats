@@ -101,14 +101,26 @@ final class RuleSet {
     Map<String, ElementRule> rules,
     List<ElementPattern> exemptions, {
     required bool checked,
-  })  : _rules = Map.unmodifiable(rules),
-        _patterns = _byTagName(exemptions) {
+  })  : _rules = Map.unmodifiable({
+          for (final MapEntry(key: name, value: rule) in rules.entries)
+            name: ElementRule(attributes: Map.unmodifiable(rule.attributes)),
+        }),
+        _patterns = _byTagName([
+          for (final pattern in exemptions)
+            ElementPattern(
+              pattern.tagName,
+              match: Map.unmodifiable(pattern.match),
+              attributes: Map.unmodifiable(pattern.attributes),
+            ),
+        ]) {
     for (final MapEntry(key: name, value: rule) in rules.entries) {
       _check(name, rule.attributes, checked: checked);
     }
     for (final pattern in exemptions) {
-      _check(pattern.tagName, pattern.match, checked: checked);
-      _check(pattern.tagName, pattern.attributes, checked: checked);
+      _check(pattern.tagName, pattern.match,
+          checked: checked, parameter: 'exemptions');
+      _check(pattern.tagName, pattern.attributes,
+          checked: checked, parameter: 'exemptions');
       for (final attribute in pattern.attributes.keys) {
         if (pattern.match.containsKey(attribute)) {
           throw ArgumentError.value(
@@ -125,15 +137,16 @@ final class RuleSet {
     String name,
     Map<String, AttributeRule> attributes, {
     required bool checked,
+    String parameter = 'rules',
   }) {
     if (!isWritableTagName(name)) {
-      throw ArgumentError.value(name, 'rules', 'not a writable tag name');
+      throw ArgumentError.value(name, parameter, 'not a writable tag name');
     }
     for (final attribute in attributes.keys) {
       if (!isWritableAttributeName(attribute)) {
         throw ArgumentError.value(
           attribute,
-          'rules',
+          parameter,
           'not a writable attribute name on <$name>',
         );
       }
@@ -194,7 +207,7 @@ final class RuleSet {
   ///
   /// For an element with a rule in both, an attribute is kept if either
   /// rule keeps it. Exemptions of both are kept as they are, this rule
-  /// set's first.
+  /// set's first. Narrow with [without] and [restrict].
   ///
   /// A union with a [RuleSet.unsafe] is as unsafe as that rule set.
   RuleSet union(RuleSet other) => RuleSet._combined(
@@ -216,31 +229,65 @@ final class RuleSet {
         }),
       );
 
-  /// A rule set allowing only what both rule sets allow.
+  /// This rule set without the elements in [elements]: neither their rules
+  /// nor their exemptions.
   ///
-  /// An element must have a rule in both, and keeps only attributes kept
-  /// by both. Exemptions survive only if present in both rule sets (by
-  /// [ElementPattern.==]), in this rule set's order; every other exemption
-  /// disappears, whatever the rules say. Exemptions are exceptions to rules,
-  /// and rules compose; exceptions do not. Add the ones wanted afterwards
-  /// with [withExemptions].
-  ///
-  /// For rule sets without exemptions this is the same as sanitizing with
-  /// this rule set and then with [other].
-  RuleSet intersection(RuleSet other) => RuleSet._combined(
+  /// ```dart
+  /// RuleSet.gfm().without({'img', 'picture', 'source'})
+  /// ```
+  RuleSet without(Set<String> elements) => RuleSet._combined(
         Map.unmodifiable({
           for (final MapEntry(key: name, value: rule) in _rules.entries)
-            if (other._rules[name] case final theirs?)
-              name: rule.intersection(theirs),
+            if (!elements.contains(name)) name: rule,
         }),
         Map.unmodifiable({
-          for (final MapEntry(key: name, value: mine) in _patterns.entries)
-            if (other._patterns[name] case final theirs?)
-              if (mine.where(theirs.contains).toList() case final common
-                  when common.isNotEmpty)
-                name: List<ElementPattern>.unmodifiable(common),
+          for (final MapEntry(key: name, value: patterns) in _patterns.entries)
+            if (!elements.contains(name)) name: patterns,
         }),
       );
+
+  /// This rule set with the rule for [element] narrowed by [rule]: an
+  /// attribute [rule] names is kept only if both rules keep it; attributes
+  /// it does not name, other elements, and exemptions are unchanged.
+  ///
+  /// ```dart
+  /// RuleSet.gfm().restrict('a', ElementRule(attributes: {
+  ///   'href': AttributeRule.url((u) => u.host == 'pub.dev'),
+  /// }))
+  /// ```
+  ///
+  /// Throws [ArgumentError] if this rule set has no rule for [element], or
+  /// [rule] names an attribute that rule does not have: a restriction can
+  /// only narrow.
+  RuleSet restrict(String element, ElementRule rule) {
+    final mine = _rules[element];
+    if (mine == null) {
+      throw ArgumentError.value(element, 'element', 'has no rule to restrict');
+    }
+    for (final name in rule.attributes.keys) {
+      if (!mine.attributes.containsKey(name)) {
+        throw ArgumentError.value(
+          name,
+          'rule',
+          'not an attribute of <$element> in this rule set',
+        );
+      }
+    }
+    return RuleSet._combined(
+      Map.unmodifiable({
+        ..._rules,
+        element: ElementRule(attributes: {
+          for (final MapEntry(key: name, value: theirs)
+              in mine.attributes.entries)
+            name: switch (rule.attributes[name]) {
+              null => theirs,
+              final narrower => theirs.intersection(narrower),
+            },
+        }),
+      }),
+      _patterns,
+    );
+  }
 
   /// This rule set with [exemptions] added after its own.
   ///

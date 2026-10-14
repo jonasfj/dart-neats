@@ -276,9 +276,5 @@ final gfmRuleSet = RuleSet({
         },
       ),
 }, exemptions: [
-  _checkbox,
+  gfmCheckbox(),
 ]);
-
-/// One instance, so that rule sets derived from [gfmRuleSet] share it and
-/// `RuleSet.intersection` keeps it.
-final _checkbox = gfmCheckbox();

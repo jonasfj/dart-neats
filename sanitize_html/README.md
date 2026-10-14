@@ -40,13 +40,14 @@ final safe = sanitizeHtml(
 );
 ```
 
-Three rule sets are provided:
+Two rule sets and two exemptions are provided:
 
  * `RuleSet.gfm()` — rendered Markdown, raw HTML included (the default).
  * `RuleSet.html()` — arbitrary HTML: the element and attribute tables of
    Google's [safevalues][3] sanitizer, which keeps whatever cannot reach
-   outside the sanitized content. No `id`, `name`, `class`, `<iframe>` or
-   form controls; add what the host can afford with `union`.
+   outside the sanitized content. No `id`, `name`, `class`, `<iframe>`,
+   `<form>` or controls that could be typed into or submitted; add what the
+   host can afford with `union`.
  * `ElementPattern.iframe(where: ..., sandbox: ...)` and
    `ElementPattern.checkbox` — exemptions to add to either with
    `withExemptions`.
@@ -74,8 +75,8 @@ final rules = RuleSet.gfm().union(RuleSet({
 ```
 
 An `AttributeRule` only ever keeps or drops a value; it never rewrites. So
-`union` keeps what either rule set keeps and `intersection` what both keep,
-with no surprises. Where an element is acceptable only in one exact form —
+`union` keeps what either rule set keeps, `without` drops elements, and
+`restrict` tightens the attributes of one element, with no surprises. Where an element is acceptable only in one exact form —
 `<input>` as a checkbox, `<iframe>` from one origin and sandboxed — an
 `ElementPattern` names that form as an exemption: judged on the element as
 written, tried before the rule, never merged with anything. Rewriting — adding

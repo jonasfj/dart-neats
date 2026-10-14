@@ -16,9 +16,9 @@
 ///
 /// A pattern is judged on the element as written, with the pattern's own
 /// attribute rules, and is never merged with other rules: a union keeps the
-/// patterns of both sides as they are, an intersection keeps only patterns
-/// present in both. Nothing can loosen what a pattern matches once it is
-/// written.
+/// patterns of both sides as they are, `without` removes them with their
+/// element, `restrict` leaves them alone. Nothing can loosen what a pattern
+/// matches once it is written.
 library;
 
 import 'attribute_rule.dart';
@@ -57,10 +57,9 @@ import 'attribute_rule.dart';
 /// Patterns are never merged with other rules, so a `RuleSet.union` with
 /// a rule set allowing `src` from another origin cannot make the pattern
 /// above match a frame from that origin. Two acceptable forms are two
-/// patterns. And exemptions do not compose: `RuleSet.intersection` keeps
-/// only exemptions present in *both* rule sets ([==]); any other
-/// disappears, whatever the rules say. Add exemptions after intersecting,
-/// with `RuleSet.withExemptions`.
+/// patterns. `RuleSet.without` removes an element's exemptions together
+/// with its rule; `RuleSet.restrict` narrows rules only and leaves
+/// exemptions as they are.
 final class ElementPattern {
   /// The element this pattern applies to.
   final String tagName;
@@ -126,35 +125,9 @@ final class ElementPattern {
           'width': const AttributeRule.any(),
         },
       );
-
-  /// Whether [other] is the same pattern: the same object, or the same tag
-  /// with the same attribute names bound to the same [AttributeRule]
-  /// objects.
-  ///
-  /// Attribute rules are compared by identity, never by what they would
-  /// decide, so two patterns built separately with `AttributeRule.where`
-  /// are not equal. Keep a pattern in one place and reuse it.
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ElementPattern &&
-          tagName == other.tagName &&
-          _sameRules(match, other.match) &&
-          _sameRules(attributes, other.attributes);
-
-  @override
-  int get hashCode => Object.hash(
-        tagName,
-        Object.hashAllUnordered(match.keys),
-        Object.hashAllUnordered(attributes.keys),
-      );
 }
 
 bool _isCheckbox(String value) => value == 'checkbox';
-
-bool _sameRules(Map<String, AttributeRule> a, Map<String, AttributeRule> b) =>
-    a.length == b.length &&
-    a.entries.every((e) => identical(b[e.key], e.value));
 
 /// Package-private operations on [ElementPattern]; not exported.
 extension ElementPatternExtension on ElementPattern {

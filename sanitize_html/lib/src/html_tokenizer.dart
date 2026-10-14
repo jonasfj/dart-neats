@@ -15,8 +15,8 @@
 /// # UNTRUSTED: tokenizers split input into tags and text.
 ///
 /// A tokenizer turns HTML source into [HtmlTokenSink] calls. It is _not_
-/// part of the trusted base: whatever it reports, the sanitizer drops
-/// elements and attributes without a rule and `HtmlWriter` escapes text
+/// part of the trusted base: whatever it reports, the sanitizer unwraps
+/// elements and drops attributes without a rule and `HtmlWriter` escapes text
 /// and values, so a tokenizer bug can only make the output uglier (markup
 /// shown as text), never unsafe. Review tokenizers for performance,
 /// termination and fidelity, not for security.

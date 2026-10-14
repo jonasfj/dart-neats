@@ -122,6 +122,13 @@ void main() {
     });
   });
 
+  test('dom tokenizer survives numeric character references beyond 2^63', () {
+    expect(
+        sanitizeHtml('a&#9223372036854775808;b&#x10000000000000000;c',
+            tokenizer: HtmlTokenizer.dom),
+        'a&#9223372036854775808;b&#x10000000000000000;c');
+  });
+
   group('All tokenizers:', () {
     for (final MapEntry(key: name, value: tokenizer) in tokenizers.entries) {
       String sanitize(String html) => sanitizeHtml(html, tokenizer: tokenizer);
